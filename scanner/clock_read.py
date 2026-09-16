@@ -9,29 +9,32 @@ they behave: a countdown clock is one of the only things in the frame that
 changes in a small, fixed-position, text-shaped region over time (unlike a
 moving face, a scrolling chat, or a static logo/name).
 
-Reading the digits without any font/template assets works because a
-countdown clock's fastest-changing digit (ones of seconds) cycles through
-0-9 in a fixed, known, descending order once every ten real seconds. Rather
-than clustering glyph images into 10 shape-based buckets up front - which
-turned out to be fragile, since real per-frame renders of the very same
-digit are noisy enough (compression, sub-pixel jitter) to fragment or blend
-together - the value is derived from *timing* first: counting "did this
-position's glyph change from the previous frame" gives a running tick
-count, and the one frame where the ones digit wraps 9->8->...->0 exactly
-overlaps a tens-of-seconds change, anchoring that tick count to an absolute
-value with no external reference needed. Only after that gives us a small
-set of confidently-labeled example glyphs do we fall back to ordinary
-nearest-template shape matching - to fill any frame timing couldn't reach,
-and to read the tens-of-seconds and minutes positions (which share the same
-font/size but don't tick predictably enough to bootstrap on their own).
+Reading the digits without any font/template assets works in two stages.
 
-This is good enough to track a clock's trend reliably, but not yet perfect:
-occasional frames (particularly on unfamiliar fonts, or right after a video
-compression artifact) still get a single position misclassified for a few
-frames before the next real change self-corrects it. `_reject_outliers`
-catches single-frame spikes; short self-consistent runs of a wrong value
-can still slip through. Treat individual readings as best-effort, not
-ground truth.
+First, a bootstrap: a countdown's fastest-changing digit (ones of seconds)
+cycles through 0-9 in a fixed, known, descending order once every ten real
+seconds. Rather than clustering glyph images into 10 shape-based buckets up
+front - fragile, since real per-frame renders of the very same digit are
+noisy enough (compression, sub-pixel jitter) to fragment or blend together -
+the value is derived from *timing*: counting "did this position's glyph
+change from the previous frame" gives a running tick count, and the one
+frame where the ones digit wraps 9->8->...->0 exactly overlaps a
+tens-of-seconds change, anchoring that tick count to an absolute value with
+no external reference needed. That gives us a handful of confidently-known
+example glyphs per digit, averaged into a clean template set.
+
+Second, reading: rather than classifying each position once per transition
+and trusting that single classification until the next change - which lets
+one bad frame corrupt every reading downstream of it until the next real
+change happens to correct it - every frame in a run independently guesses
+the clock's value at the *start* of that run (its own template-classified
+value, offset by its own precise tick count since the run began), and the
+run's actual value is whichever guess the most frames agree on. A handful
+of misclassified frames are just outvoted; they no longer get to corrupt
+the whole run. Ticking (same/different) is a much easier and more reliable
+judgment than 10-way digit classification, so this pushes nearly all of the
+remaining error into "which exact digit is this", where majority voting can
+actually clean it up.
 """
 from __future__ import annotations
 
@@ -44,11 +47,15 @@ _CHANGE_LO = 0.10   # a ticking clock changes less than 100% of frame-steps
 _CHANGE_HI = 0.85   # (only one side's clock runs at a time) but more than ~0
 _DIFF_THRESH = 20   # per-pixel gray delta counted as "changed"
 
-_GLYPH_H = 16            # every digit glyph is rescaled to this height for comparison
-_GLYPH_W = 14            # then padded/cropped to this width, preserving aspect ratio -
+_GLYPH_H = 28            # every digit glyph is rescaled to this height for comparison -
+                         # a 16px canvas measurably lost enough detail to confuse a real
+                         # "0"/"8" pair (matching hole count, close ZNCC); this is plenty
+                         # for typical on-screen clock digit sizes without being slow
+_GLYPH_W = 24            # then padded/cropped to this width, preserving aspect ratio -
                          # a thin "1" and a wide "0" must stay visually distinct, so
                          # width is never stretched to fit like height is
-_SAME_SIM = 0.80         # ZNCC above this = "still showing the same digit"
+_SAME_SIM_DEFAULT = 0.85   # fallback "same digit" threshold when a clock's own
+                           # data doesn't give _calibrate_same_sim enough to work with
 
 
 @dataclass
@@ -198,38 +205,88 @@ def _char_glyph(mask: np.ndarray, char: tuple[int, int, int, int]) -> np.ndarray
     """Extract one segmented character as a fixed-size binary image, so
     glyphs of the same digit compare equal regardless of the exact crop.
 
-    Height is normalized by resizing (it's ~constant for a given clock
-    anyway), but width is only ever scaled by that same factor and then
-    padded/cropped, never stretched independently - a narrow "1" and a wide
-    "0" need to stay visually distinct, not be squashed to the same shape.
+    Crops a native-scale window *centered on the character*, sized so that
+    scaling it to the canvas height also lands it at the canvas width - then
+    does exactly one resize, of that fixed-size window, to the canvas.
+    Deliberately not "resize the detected bbox to fit the canvas": the ink
+    threshold that finds a character's left/right edges is noisy enough
+    frame to frame (anti-aliasing, compression) that its measured *width*
+    can vary several pixels for the very same digit. Rescaling to that
+    noisy width turns a few pixels of edge jitter into a visible size
+    distortion of the whole glyph; cropping a fixed window around the
+    center and resizing *that* by one clock-wide constant factor doesn't -
+    the same real ink lands in the same place regardless of exactly where
+    the detector drew the edge that frame.
     """
     x0, x1, y0, y1 = char
-    patch = (mask[y0:y1 + 1, x0:x1 + 1].astype(np.uint8)) * 255
-    h, w = patch.shape
+    h = y1 - y0 + 1
     scale = _GLYPH_H / max(h, 1)
-    new_w = max(1, min(round(w * scale), _GLYPH_W))
-    resized = cv2.resize(patch, (new_w, _GLYPH_H), interpolation=cv2.INTER_AREA)
-    canvas = np.zeros((_GLYPH_H, _GLYPH_W), np.uint8)
-    x_off = (_GLYPH_W - new_w) // 2
-    canvas[:, x_off:x_off + new_w] = resized
-    return canvas
+    native_w = max(1, round(_GLYPH_W / scale))
+    cx = (x0 + x1) / 2.0
+    sx0 = int(round(cx - native_w / 2))
+    sx1 = sx0 + native_w
+    img_h, img_w = mask.shape
+    csx0, csx1 = max(0, sx0), min(img_w, sx1)
+    patch = np.zeros((h, native_w), np.uint8)
+    if csx1 > csx0:
+        patch[:, csx0 - sx0:csx1 - sx0] = mask[y0:y1 + 1, csx0:csx1].astype(np.uint8) * 255
+    resized = cv2.resize(patch, (_GLYPH_W, _GLYPH_H), interpolation=cv2.INTER_AREA)
+    # A light blur trades a little shape precision for a lot of stability:
+    # measured on a real video, the very same digit's exact sub-pixel
+    # rendering shifted enough between frames (whenever neighboring text -
+    # e.g. the minutes column - changed width) to score as low as 0.68
+    # against itself on raw pixels, comfortably in "different digit"
+    # territory. Blurring smooths over that jitter while a real digit's
+    # distinct shape still shows through.
+    return cv2.GaussianBlur(resized, (3, 3), 0.8)
 
 
-def _similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """Zero-normalized cross-correlation between two glyph images.
-
-    Raw pixel agreement is a bad metric here: a 16x14 glyph canvas is mostly
-    black background, so any two glyphs already agree on ~80% of pixels
-    before the actual digit shape is considered at all, making genuinely
-    different digits look deceptively "similar". Mean-centering (as
-    recognize.py already does for piece templates) cancels that shared
-    background out and compares the actual ink pattern instead.
-    """
+def _zncc(a: np.ndarray, b: np.ndarray) -> float:
     af, bf = a.astype(np.float32), b.astype(np.float32)
     af, bf = af - af.mean(), bf - bf.mean()
     num = float((af * bf).sum())
     den = float(np.sqrt((af * af).sum() * (bf * bf).sum()))
     return num / den if den > 1e-6 else 0.0
+
+
+_ALIGN_SHIFT = 1   # max pixels of sub-pixel jitter tolerance in _similarity
+
+
+def _similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Zero-normalized cross-correlation between two glyph images, tolerant
+    of a small sub-pixel alignment shift between them.
+
+    Raw pixel agreement is a bad metric here: a glyph canvas is mostly
+    black background, so any two glyphs already agree on most pixels
+    before the actual digit shape is considered at all, making genuinely
+    different digits look deceptively "similar". Mean-centering (as
+    recognize.py already does for piece templates) cancels that shared
+    background out and compares the actual ink pattern instead.
+
+    Plain ZNCC is still very position-sensitive, though: a digit's exact
+    sub-pixel rendering can shift by a pixel between frames just because the
+    surrounding text (e.g. the minutes column) changed width, with the
+    digit itself never actually changing - measured on a real video, the
+    very same "4" scored as low as 0.68 against itself, comfortably in
+    "different digit" territory, from this alone. So try a small range of
+    (dx, dy) offsets and take the best-aligned score - a real digit change
+    won't accidentally line up this well at any offset, but the same digit
+    shifted by a pixel will.
+    """
+    best = _zncc(a, b)
+    h, w = a.shape
+    for dx in range(-_ALIGN_SHIFT, _ALIGN_SHIFT + 1):
+        for dy in range(-_ALIGN_SHIFT, _ALIGN_SHIFT + 1):
+            if dx == 0 and dy == 0:
+                continue
+            shifted = np.zeros_like(b)
+            sx0, sx1 = max(0, dx), min(w, w + dx)
+            tx0, tx1 = max(0, -dx), min(w, w - dx)
+            sy0, sy1 = max(0, dy), min(h, h + dy)
+            ty0, ty1 = max(0, -dy), min(h, h - dy)
+            shifted[ty0:ty1, tx0:tx1] = b[sy0:sy1, sx0:sx1]
+            best = max(best, _zncc(a, shifted))
+    return best
 
 
 def _segments(times: list[float]) -> list[int]:
@@ -247,110 +304,293 @@ def _segments(times: list[float]) -> list[int]:
     return seg
 
 
-def _track_slot(glyphs: list[np.ndarray | None], seg_id: list[int],
-                 templates: list[np.ndarray | None]) -> list[int | None]:
-    """Read one digit position frame-by-frame, but only ever re-classify it
-    against the template set when the glyph actually changed (or a timing
-    gap, or the slot disappearing for a frame, broke continuity) - otherwise
-    just carry the previous value forward.
+def _calibrate_same_sim(glyphs: list[np.ndarray], seg_id: list[int],
+                         default: float = _SAME_SIM_DEFAULT,
+                         floor: float = 0.035, ratio: float = 4.0) -> float:
+    """Find this clock's own "same digit" similarity threshold instead of
+    assuming one font-independent constant.
 
-    A digit like the minutes column barely ever changes, so classifying it
-    independently on every single frame just multiplies the chances of one
-    noisy frame getting misread; trusting "still looks the same" instead
-    means a digit only has to be classified correctly once per real change.
-    A glyph of None means this position doesn't exist in that frame (e.g. a
-    tens-of-minutes digit before the count reaches 10).
+    No single fixed threshold works across fonts: a plain sans-serif clock's
+    genuinely-different digits can score as low as -0.1 ZNCC, while a
+    7-segment/LCD-style clock's "5" and "6" - one stroke apart - can score
+    0.86 even though they're different digits, comfortably above a generic
+    0.80 cutoff (that specific confusion silently ate every 5<->6 transition
+    on one real video before this was added). But within *one* clock, the
+    "genuinely unchanged" pairs (repeats/pauses) cluster very close to 1.0,
+    clearly separated from every "changed" pair below them - so sort this
+    clock's own consecutive-pair similarities and find that separation (see
+    _gap_threshold).
     """
-    values: list[int | None] = [None] * len(glyphs)
-    prev_glyph = None
-    prev_seg = None
-    prev_val = None
-    for i, (g, seg) in enumerate(zip(glyphs, seg_id)):
-        if g is None:
-            prev_glyph = None
-            continue
-        if seg != prev_seg or prev_glyph is None or _similarity(g, prev_glyph) < _SAME_SIM:
-            prev_val = _classify(g, templates)
-        values[i] = prev_val
-        prev_glyph, prev_seg = g, seg
-    return values
+    sims = [_similarity(glyphs[i], glyphs[i - 1])
+            for i in range(1, len(glyphs)) if seg_id[i] == seg_id[i - 1]]
+    return _gap_threshold(sims, default, floor, ratio)
+
+
+def _gap_threshold(sims: list[float], default: float, floor: float, ratio: float) -> float:
+    """The pure math behind _calibrate_same_sim, split out so it's directly
+    testable without needing glyph images that hash to particular
+    similarities.
+
+    Neither "first gap over some fixed size" nor "single largest gap
+    anywhere" holds up: a fixed size small enough not to trip on the "same
+    digit" cluster's own internal jitter is often *bigger* than the true
+    boundary gap on some real clocks, while the "different digit" cluster
+    can be wide enough that gaps far from the true boundary, deep in its own
+    spread, are *larger* than the boundary gap itself - measured on real
+    clocks, both failure modes actually happen. What's consistent is
+    *relative*: scanning down from the top,
+    the boundary gap dwarfs every gap seen so far inside the tight cluster
+    above it. So track the largest internal gap seen so far and stop at the
+    first gap that clears both an absolute floor and `ratio` times that
+    running max - a small, gradually-growing spread doesn't trigger it, only
+    a sudden jump well outside the pattern established so far.
+    """
+    if len(sims) < 6:
+        return default
+    s = sorted(sims, reverse=True)
+    max_internal = 0.0
+    for a, b in zip(s, s[1:]):
+        gap = a - b
+        if gap > max(floor, ratio * max_internal):
+            return (a + b) / 2
+        max_internal = max(max_internal, gap)
+    return default
+
+
+def _relative_ticks(glyphs: list[np.ndarray], seg_id: list[int],
+                     same_thresh: float) -> tuple[list[int], list[bool]]:
+    """Count "did this glyph change from the previous frame" within each
+    reliably-spaced run, resetting at every segment boundary.
+
+    Same/different is a much more robust judgment than classifying which of
+    10 digits a glyph shows (a real digit's render is noisy enough that two
+    frames of the *same* digit can differ almost as much as two different
+    digits do in absolute terms - but they still look far more like each
+    other than like anything else, which is all a threshold needs) - as long
+    as that threshold is calibrated to this clock's own font (see
+    _calibrate_same_sim).
+    """
+    n = len(glyphs)
+    ticks = [0] * n
+    changed = [False] * n
+    for i in range(1, n):
+        reliable = seg_id[i] == seg_id[i - 1]
+        diff = _similarity(glyphs[i], glyphs[i - 1]) < same_thresh
+        changed[i] = reliable and diff
+        ticks[i] = (ticks[i - 1] + (1 if diff else 0)) if reliable else 0
+    return ticks, changed
 
 
 def _bootstrap_ones_digits(ones_glyphs: list[np.ndarray], tens_glyphs: list[np.ndarray],
-                            times: list[float]) -> list[int | None]:
+                            seg_id: list[int], ones_thresh: float, tens_thresh: float) -> list[int | None]:
     """Derive an absolute digit value (0-9) for as many ones-of-seconds
     frames as possible from pure timing, without classifying glyph shape at
     all: a countdown's ones digit decrements by exactly one every real
     second, wrapping 9->8->...->0->9 forever, and the tens-of-seconds digit
-    only ever changes at the exact instant of that wrap. So within any
-    contiguous run of reliably-spaced frames, counting "did the glyph change
-    from the previous frame" gives a running tick count, and the one frame
-    where both ones and tens changed together anchors that whole run's tick
-    count to an absolute value ("0" the moment before the wrap).
+    only ever changes at the exact instant of that wrap. So the frame right
+    before ones and tens change *together* is "0" - a self-contained anchor.
 
-    This sidesteps clustering glyphs into 10 shape-based buckets up front,
-    which is fragile: real per-frame renders of the *same* digit are noisy
-    enough (compression, sub-pixel jitter) that naive clustering fragments
-    single digits into several buckets or blends different digits together.
+    Every such wrap in a segment is used, and each frame is labeled from
+    whichever wrap is nearest to it in tick-distance - not just the first
+    wrap found for that whole segment. A single same/different misjudgment
+    anywhere in _relative_ticks silently shifts every label's tick count
+    from that point on by a constant (nothing about the resulting sequence
+    looks wrong locally - it still counts down cleanly, just relative to the
+    wrong absolute value), and that error keeps compounding the further you
+    get from the anchor it's measured against. Re-anchoring at every wrap
+    (they come roughly every 10 ticks) caps how far any single frame's label
+    can drift, rather than letting one early error miscalibrate an entire
+    multi-minute run.
+
+    This only needs to succeed often enough to harvest a handful of
+    confidently-known example glyphs per digit (see _build_templates) - the
+    actual reading later on doesn't depend on this reaching every frame.
+
+    ones_thresh and tens_thresh are calibrated separately (see
+    _calibrate_same_sim) rather than sharing one threshold: they're
+    different glyph positions with their own font-confusion pairs, and a
+    threshold tuned for one can be badly miscalibrated for the other (a
+    threshold too low for tens's own gap made it register a "change" on
+    nearly every frame instead of the ~1-in-10 a real wrap should produce,
+    fabricating a wrap-anchor almost every tick).
     """
-    n = len(ones_glyphs)
-    seg_id = _segments(times)
-
-    ticks = [0] * n   # cumulative ticks-since-segment-start
-    ones_changed = [False] * n
-    tens_changed = [False] * n
-    for i in range(1, n):
-        reliable = seg_id[i] == seg_id[i - 1]
-        o_diff = _similarity(ones_glyphs[i], ones_glyphs[i - 1]) < _SAME_SIM
-        t_diff = _similarity(tens_glyphs[i], tens_glyphs[i - 1]) < _SAME_SIM
-        ones_changed[i] = reliable and o_diff
-        tens_changed[i] = reliable and t_diff
-        ticks[i] = (ticks[i - 1] + (1 if o_diff else 0)) if reliable else 0
+    ticks, ones_changed = _relative_ticks(ones_glyphs, seg_id, ones_thresh)
+    _, tens_changed = _relative_ticks(tens_glyphs, seg_id, tens_thresh)
 
     # anchor: the frame right before a combined ones+tens change is "0"
-    anchors: dict[int, tuple[int, int]] = {}   # segment -> (ticks_at_anchor, value=0)
-    for i in range(1, n):
-        if ones_changed[i] and tens_changed[i] and seg_id[i - 1] not in anchors:
-            anchors[seg_id[i - 1]] = (ticks[i - 1], 0)
+    anchors_by_seg: dict[int, list[int]] = {}
+    for i in range(1, len(ones_glyphs)):
+        if ones_changed[i] and tens_changed[i]:
+            anchors_by_seg.setdefault(seg_id[i - 1], []).append(ticks[i - 1])
 
-    values: list[int | None] = [None] * n
-    for i in range(n):
-        anchor = anchors.get(seg_id[i])
-        if anchor is None:
+    # A real wrap recurs every 10 ticks; anchors packed much closer than
+    # that mean tens_changed fired on frames that didn't actually wrap (a
+    # noisier digit pair for this position/font than the calibrated
+    # threshold assumed). Greedily thin them out - first candidate in a
+    # cluster wins, anything within 8 ticks of an already-accepted anchor is
+    # dropped - rather than trusting every one of them as a genuine "0".
+    for seg, cands in anchors_by_seg.items():
+        thinned: list[int] = []
+        for t in sorted(cands):
+            if not thinned or t - thinned[-1] >= 8:
+                thinned.append(t)
+        anchors_by_seg[seg] = thinned
+
+    values: list[int | None] = [None] * len(ones_glyphs)
+    for i in range(len(ones_glyphs)):
+        candidates = anchors_by_seg.get(seg_id[i])
+        if not candidates:
             continue
-        anchor_ticks, anchor_val = anchor
-        values[i] = (anchor_val - (ticks[i] - anchor_ticks)) % 10
+        nearest = min(candidates, key=lambda a: abs(ticks[i] - a))
+        values[i] = (nearest - ticks[i]) % 10
     return values
 
 
-def _build_templates(glyphs: list[np.ndarray], values: list[int | None]) -> list[np.ndarray | None]:
-    """Pick one clean, confidently-known glyph image per digit 0-9, to reuse
-    (via nearest-match) for every other position on the same clock."""
-    templates: list[np.ndarray | None] = [None] * 10
+def _build_templates(glyphs: list[np.ndarray], values: list[int | None],
+                      same_thresh: float) -> list[np.ndarray | None]:
+    """Build one clean template per digit 0-9, to reuse (via nearest-match)
+    for every other position on the same clock.
+
+    Blindly averaging every glyph labeled as a given digit isn't safe: the
+    timing bootstrap is very good but not perfect, and with only a handful
+    of examples for some digits (a short clip won't necessarily observe each
+    value equally often), even one or two mislabeled glyphs can visibly
+    blend a wrong digit's shape into the average. So within each digit's
+    labeled examples, cluster by mutual similarity first and average only
+    the largest cluster - mislabeled examples are rejected the same way a
+    misclassification anywhere else in this module is (see _relative_ticks,
+    _vote_for_anchors): outvoted, not blended in.
+    """
+    by_digit: list[list[np.ndarray]] = [[] for _ in range(10)]
     for g, v in zip(glyphs, values):
-        if v is not None and templates[v] is None:
-            templates[v] = g
-    return templates
+        if v is not None:
+            by_digit[v].append(g)
+    return [_largest_cluster_mean(cands, same_thresh) if cands else None for cands in by_digit]
 
 
-def _classify(glyph: np.ndarray, templates: list[np.ndarray | None]) -> int | None:
-    best_d, best_sim = None, -1.0
-    for d, t in enumerate(templates):
-        if t is None:
-            continue
-        sim = _similarity(glyph, t)
-        if sim > best_sim:
-            best_sim, best_d = sim, d
+def _largest_cluster_mean(glyphs: list[np.ndarray], same_thresh: float) -> np.ndarray:
+    """Greedily group glyphs by mutual similarity (same running-average
+    approach as classification itself) and return the mean of whichever
+    cluster ends up largest."""
+    means: list[np.ndarray] = []
+    counts: list[int] = []
+    for g in glyphs:
+        gf = g.astype(np.float32)
+        best_i, best_sim = -1, -1.0
+        for i, m in enumerate(means):
+            sim = _similarity(gf, m)
+            if sim > best_sim:
+                best_sim, best_i = sim, i
+        if best_i >= 0 and best_sim >= same_thresh:
+            n = counts[best_i]
+            means[best_i] = (means[best_i] * n + gf) / (n + 1)
+            counts[best_i] += 1
+        else:
+            means.append(gf)
+            counts.append(1)
+    biggest = max(range(len(counts)), key=lambda i: counts[i])
+    return means[biggest].astype(np.uint8)
+
+
+_CLASSIFY_TIE_MARGIN = 0.05   # candidates within this much of the top ZNCC score
+                              # are close enough to break the tie topologically
+
+
+def _hole_count(glyph: np.ndarray, thresh: int = 100) -> int:
+    """Count fully-enclosed background regions in a glyph: "0" and "6" and
+    "9" have one, "8" has two, the rest have none. ZNCC compares raw pixel
+    correlation and can be fooled by two round, similarly-sized digits (0
+    vs 8 is the pair that's actually come up); this topological count is a
+    cheap, independent signal that doesn't share that blind spot."""
+    binary = (glyph > thresh).astype(np.uint8)
+    bg = 1 - binary
+    num, labels = cv2.connectedComponents(bg)
+    border = (set(labels[0, :].tolist()) | set(labels[-1, :].tolist())
+              | set(labels[:, 0].tolist()) | set(labels[:, -1].tolist()))
+    return sum(1 for lbl in range(1, num) if lbl not in border)
+
+
+def _classify(glyph: np.ndarray, templates: list[np.ndarray | None],
+              valid_digits: range | None = None) -> int | None:
+    """Nearest-template match, optionally restricted to a set of digits that
+    could ever legitimately appear here - e.g. tens-of-seconds is always
+    0-5 (seconds only run 00-59), a free, purely mathematical constraint
+    that costs nothing to enforce and rules out an entire class of
+    misreads no amount of better image processing would otherwise catch."""
+    sims = sorted(((d, _similarity(glyph, t)) for d, t in enumerate(templates)
+                    if t is not None and (valid_digits is None or d in valid_digits)),
+                  key=lambda p: -p[1])
+    if not sims:
+        return None
+    best_d, best_sim = sims[0]
+    # Only worth breaking a tie among candidates ZNCC couldn't clearly
+    # separate - and only when hole-count picks out exactly one of them,
+    # not zero (no better answer) or more than one (still ambiguous).
+    tied = [d for d, s in sims if best_sim - s <= _CLASSIFY_TIE_MARGIN]
+    if len(tied) > 1:
+        q_holes = _hole_count(glyph)
+        matches = [d for d in tied if _hole_count(templates[d]) == q_holes]
+        if len(matches) == 1:
+            return matches[0]
     return best_d
+
+
+_MIN_SEG_VOTES = 3       # a segment needs at least this many votes to trust its winner
+_MIN_VOTE_FRAC = 0.6     # ...and the winner must hold a clear (not bare) majority of them
+
+
+_VOTE_TOL = 3   # guesses within this many seconds of each other count as the same vote
+
+
+def _cluster_votes(guesses: list[int], tol: int = _VOTE_TOL) -> dict[int, int]:
+    """Group raw per-frame anchor guesses that land within `tol` of each
+    other, so small residual jitter doesn't split one real majority into
+    several similar-but-not-identical guesses that individually look like
+    minorities. Returns {representative_value: vote_count} - same shape
+    _vote_for_anchors already expects, just pre-merged.
+
+    Splits on gaps between *consecutive* sorted values, not distance from a
+    fixed representative - comparing everything to whichever value a
+    cluster happened to see first misses a jitter chain that drifts
+    gradually (591, 592, 593, ... 601) further than `tol` end-to-end, even
+    though every adjacent step is well within it.
+    """
+    if not guesses:
+        return {}
+    s = sorted(guesses)
+    clusters = [[s[0]]]
+    for g in s[1:]:
+        if g - clusters[-1][-1] <= tol:
+            clusters[-1].append(g)
+        else:
+            clusters.append([g])
+    return {round(sum(c) / len(c)): len(c) for c in clusters}
+
+
+def _vote_for_anchors(votes: dict[int, dict[int, int]]) -> dict[int, int]:
+    """Pick each segment's winning anchor guess, only where the majority is
+    both large enough in absolute terms and decisive enough as a share of
+    that segment's votes - a 2-1 "win" on 3 frames isn't trustworthy, and
+    neither is a 51-49 split on 100."""
+    seg_anchor: dict[int, int] = {}
+    for seg, counts in votes.items():
+        winner, win_count = max(counts.items(), key=lambda kv: kv[1])
+        total = sum(counts.values())
+        if win_count >= _MIN_SEG_VOTES and win_count / total >= _MIN_VOTE_FRAC:
+            seg_anchor[seg] = winner
+    return seg_anchor
 
 
 def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> list[ClockReading]:
     """Read a single clock's value (in seconds) across a frame sequence,
     self-calibrating the digit font from the countdown's own behavior.
 
-    frames/times must be time-ordered and cover at least one real 0-9
-    wraparound of the seconds digit (about ten real ticking seconds) or
-    digit values can't be anchored and every reading comes back None.
+    frames/times must be time-ordered. Somewhere in the sequence needs at
+    least one real 0-9 wraparound of the seconds digit (about ten real
+    ticking seconds of *this* clock actually running) to bootstrap templates
+    - without that, every reading comes back None. Once templates exist,
+    every reliably-spaced run of frames (see _segments) is read independently
+    by majority vote and doesn't need its own wraparound.
     """
     grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
 
@@ -419,34 +659,63 @@ def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> l
 
     valid_times = [times[i] for i in valid_idx]
     seg_id = _segments(valid_times)
-    ones_values = _bootstrap_ones_digits(ones_glyphs, tens_glyphs, valid_times)
-    if not any(v is not None for v in ones_values):
+    ones_thresh = _calibrate_same_sim(ones_glyphs, seg_id)
+    tens_thresh = _calibrate_same_sim(tens_glyphs, seg_id)
+    ones_boot = _bootstrap_ones_digits(ones_glyphs, tens_glyphs, seg_id, ones_thresh, tens_thresh)
+    if not any(v is not None for v in ones_boot):
         return [ClockReading(t, None) for t in times]
 
-    ones_templates = _build_templates(ones_glyphs, ones_values)
+    ones_templates = _build_templates(ones_glyphs, ones_boot, ones_thresh)
     if sum(t is not None for t in ones_templates) < 10:
         return [ClockReading(t, None) for t in times]
 
-    # fill in any frames the timing bootstrap couldn't reach (same
-    # change-aware tracking as every other position, only used where the
-    # more-reliable timing-derived value is missing), then reuse the same
-    # clean templates - learned once, from the ones-of-seconds position - for
-    # every other digit position on this clock
-    tracked_ones = _track_slot(ones_glyphs, seg_id, ones_templates)
-    ones_values = [v if v is not None else tracked_ones[k] for k, v in enumerate(ones_values)]
-    tens_values = _track_slot(tens_glyphs, seg_id, ones_templates)
-    minute_values = [_track_slot(g, seg_id, ones_templates) for g in minute_slot_glyphs]
+    # Precise, timing-only tick count since each run began - this doesn't
+    # depend on classifying digit shape at all, so it's not vulnerable to the
+    # same misreads as the vote below.
+    rel_ticks, _ = _relative_ticks(ones_glyphs, seg_id, ones_thresh)
+
+    # Each frame independently guesses what the clock read at *its run's
+    # first frame* (its own classified value, walked back by its own elapsed
+    # ticks). A correctly-classified frame always lands on the same guess as
+    # every other correctly-classified frame in that run; a misclassified
+    # frame almost never lands on that same value by coincidence. So the
+    # run's actual anchor value is just whichever guess wins the most votes -
+    # a single bad frame no longer corrupts everything downstream of it
+    # (the old failure mode: classify once per transition, trust it until
+    # the next one).
+    raw_guesses: dict[int, list[int]] = {}   # segment -> [guessed anchor values]
+    for k, i in enumerate(valid_idx):
+        n_minutes_here = len(per_frame_chars[i]) - 3
+        m_digits = [_classify(minute_slot_glyphs[s][k], ones_templates) for s in range(n_minutes_here)]
+        tens_d = _classify(tens_glyphs[k], ones_templates, valid_digits=range(6))
+        ones_d = ones_boot[k] if ones_boot[k] is not None else _classify(ones_glyphs[k], ones_templates)
+        if tens_d is None or ones_d is None or any(d is None for d in m_digits):
+            continue
+        # m_digits[s] is the slot-s digit (0 = ones-of-minutes, 1 = tens-of-
+        # minutes, ...), least-significant first - sum by place value rather
+        # than the more error-prone "accumulate left to right" pattern, which
+        # would silently reverse a 2+ digit minutes count (e.g. read "10:00"
+        # as "1:00" - exactly what a real 2-digit-minutes video hit).
+        minutes = sum(d * 10 ** s for s, d in enumerate(m_digits))
+        value_now = minutes * 60 + tens_d * 10 + ones_d
+        anchor_guess = value_now + rel_ticks[k]
+        raw_guesses.setdefault(seg_id[k], []).append(anchor_guess)
+
+    # A handful of frames land 1-2 seconds off the rest even when everything
+    # is basically working (small residual tick-counting noise, distinct
+    # from a wrong classification landing tens/minutes away) - group guesses
+    # within a few seconds of each other before counting, so that noise
+    # doesn't fragment an otherwise-clear majority into several near-miss
+    # non-majorities.
+    votes = {seg: _cluster_votes(g) for seg, g in raw_guesses.items()}
+    seg_anchor = _vote_for_anchors(votes)
 
     readings: list[ClockReading] = [ClockReading(t, None) for t in times]
     for k, i in enumerate(valid_idx):
-        ones_d, tens_d = ones_values[k], tens_values[k]
-        m_digits = [mv[k] for mv in minute_values[:len(per_frame_chars[i]) - 3]]
-        if ones_d is None or tens_d is None or any(d is None for d in m_digits):
+        anchor = seg_anchor.get(seg_id[k])
+        if anchor is None:
             continue
-        minutes = 0
-        for d in m_digits:
-            minutes = minutes * 10 + d
-        readings[i] = ClockReading(times[i], float(minutes * 60 + tens_d * 10 + ones_d))
+        readings[i] = ClockReading(times[i], float(anchor - rel_ticks[k]))
 
     return _reject_outliers(readings)
 
