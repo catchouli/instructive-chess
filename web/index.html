@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Instructive Chess</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Instructive Chess</h1>
+  <p class="tagline">Master games from YouTube, narrated move by move &mdash; search by the moves played.</p>
+</header>
+
+<main>
+  <div class="search">
+    <input id="query" type="text" autocomplete="off" spellcheck="false"
+           placeholder="e.g.  1. e4 c5 2. Nc3   &mdash;  or just  e4 c5 Nc3">
+    <button id="clear" type="button" title="Clear">&times;</button>
+  </div>
+  <p id="status" class="status"></p>
+  <ol id="results" class="results"></ol>
+</main>
+
+<footer>
+  <p>Games are catalogued automatically by the video scanner. All games begin from the
+     standard starting position.</p>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
