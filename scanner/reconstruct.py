@@ -181,41 +181,62 @@ def _relevant_squares(cur: str, target: str) -> set[chess.Square]:
 
 
 def _has_wasted_round_trip(board: chess.Board, path: list[chess.Move]) -> bool:
-    """True if some square that started *occupied* ends up with that exact
-    same occupant again, despite reading differently partway through *path*.
+    """True if some *specific piece* moves away from its starting square at
+    some point in *path* and later ends up back on that exact same square.
 
-    A piece that moves away and then all the way back to its own starting
-    square (or a second, identical piece that ends up standing in for it)
-    accomplishes nothing on the board - real games don't do this except in
-    vanishingly rare repetition-seeking lines, so a candidate sequence
-    containing one is almost always a coincidental, spurious way of matching
-    a *wrong* target (typically a single bad frame misreading a piece as
-    simply missing) rather than the true line of play. Confirmed on a real
-    video: a single frame that misread one pawn capture as an empty square
-    got "explained" by a legal-but-nonsensical 5-ply sequence - a bishop and
-    a rook both taking an excursion and returning to their exact starting
-    squares - purely because it happened to reach an exact pixel match,
-    badly corrupting every move recorded after it.
+    Such a piece accomplishes nothing on the board - real games don't do
+    this except in vanishingly rare repetition-seeking lines, so a candidate
+    sequence containing one is almost always a coincidental, spurious way of
+    matching a *wrong* target (typically a single bad frame misreading a
+    piece as simply missing) rather than the true line of play. Confirmed on
+    a real video: a single frame that misread one pawn capture as an empty
+    square got "explained" by a legal-but-nonsensical 5-ply sequence - a
+    bishop and a rook both taking an excursion and returning to their exact
+    starting squares - purely because it happened to reach an exact pixel
+    match, badly corrupting every move recorded after it.
 
-    Deliberately restricted to squares that started *occupied*: an empty
-    square constantly and harmlessly reverts to empty as unrelated pieces
-    pass through it (a bishop developing through b5 and on to capture a
-    knight, say) - that's ordinary play, not a wasted round trip, and
-    flagging it would reject real multi-ply bridges too (confirmed: an
-    earlier, broader version of this check - any square reverting at all,
-    not just occupied ones - broke a genuine bishop-develops-and-captures
-    bridge in exactly this way)."""
-    start = _placement_of(board)
+    This tracks individual piece identity (which square each surviving piece
+    *originated* from before `path`) rather than comparing each square's
+    occupant type/color before and after: an ordinary capture-then-recapture
+    on one square (e.g. exd4 cxd4, trading off an isolated pawn) leaves that
+    square occupied by the *same kind* of piece it started with, but it's a
+    genuinely different physical pawn - the original occupant was captured
+    and is gone, not "returned". Comparing only the resulting type/color (an
+    earlier version of this check) couldn't tell those apart and flagged
+    ordinary recaptures as wasted round trips."""
+    # origin[sq] is the square this piece occupied before `path` began, for
+    # every piece still on the board; a piece present at the start with no
+    # entry hasn't moved (yet), so can't have "returned" - it never left.
+    origin: dict[chess.Square, chess.Square] = {}
     b = board.copy(stack=False)
-    ever_differed = [False] * 64
     for mv in path:
+        captured_sq = None
+        if b.is_en_passant(mv):
+            captured_sq = mv.to_square + (-8 if b.turn == chess.WHITE else 8)
+        elif b.piece_at(mv.to_square) is not None:
+            captured_sq = mv.to_square
+        if captured_sq is not None:
+            origin.pop(captured_sq, None)
+
+        moved_from = origin.pop(mv.from_square, mv.from_square)
+        origin[mv.to_square] = moved_from
+
+        if b.is_castling(mv):
+            rank = chess.square_rank(mv.from_square)
+            if b.is_kingside_castling(mv):
+                rook_from, rook_to = chess.square(7, rank), chess.square(5, rank)
+            else:
+                rook_from, rook_to = chess.square(0, rank), chess.square(3, rank)
+            rook_origin = origin.pop(rook_from, rook_from)
+            origin[rook_to] = rook_origin
+
         b.push(mv)
-        now = _placement_of(b)
-        for i in range(64):
-            if now[i] != start[i]:
-                ever_differed[i] = True
-    end = _placement_of(b)
-    return any(start[i] != "." and ever_differed[i] and end[i] == start[i] for i in range(64))
+
+    # `origin` only has an entry for a square once some piece has actually
+    # moved through it during `path` (see the pop(..., default) above), so
+    # membership alone means "this piece moved at least once" - no separate
+    # "did it ever leave" bookkeeping needed.
+    return any(cur == orig for cur, orig in origin.items())
 
 
 def _find_sequence(board: chess.Board, target: str, max_depth: int):
