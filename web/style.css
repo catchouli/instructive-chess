@@ -116,6 +116,12 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
 }
 .nav button:disabled { opacity: .4; cursor: default; }
 
+.clock-label {
+  margin-top: 6px; font-size: 12px; color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.clock-label[hidden] { display: none; }
+
 .move-watch {
   display: block; margin-top: 8px; font-size: 12px;
   color: var(--accent); text-decoration: none;

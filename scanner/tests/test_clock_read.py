@@ -18,6 +18,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from clock_read import (  # noqa: E402
+    ClockBox,
     ClockReading,
     _bootstrap_ones_digits,
     _build_templates,
@@ -35,6 +36,9 @@ from clock_read import (  # noqa: E402
     _tight_ink_bbox,
     _vote_for_anchors,
     _wrap_anchors,
+    clock_at_times,
+    find_clock_regions,
+    side_for_box,
 )
 
 _SIM = 0.5   # a threshold synthetic bar-glyphs never land near either side of
@@ -366,6 +370,75 @@ def test_reject_outliers_drops_single_frame_spike():
     ]
     out = _reject_outliers(readings)
     assert [r.seconds for r in out] == [100.0, 99.0, None, 97.0, 96.0]
+
+
+def _inset(x0, x1, y0, y1, m=4):
+    return x0 + m, x1 - m, y0 + m, y1 - m
+
+
+def test_find_clock_regions_recovers_a_rarely_changing_minutes_digit():
+    # A "M:SS"-shaped label where the minutes digit changes only once across
+    # the whole sequence (far below _CHANGE_LO) while the seconds pair right
+    # next to it changes on ~half the frames - realistic for a long time
+    # control sampled over a whole game: a minutes digit that changes once
+    # every ~60 real ticks never clears the frequency threshold on its own,
+    # so the raw frequency-based blob only ever covers the seconds pair.
+    # Confirmed on a real video: a 149px-wide "09:41" label localized as
+    # just a 54px "41" blob over a ~7-minute game. find_clock_regions must
+    # still recover the *full* label by widening into the real (unchanging)
+    # pixel content, not just the changing blob.
+    h, w = 60, 120
+    min_box = _inset(20, 39, 15, 44)
+    colon = (44, 47, 23, 36)
+    tens_box = _inset(52, 71, 15, 44)
+    ones_box = _inset(76, 95, 15, 44)
+
+    frames = []
+    val = 50
+    for i in range(30):
+        if i % 2 == 0 and i > 0:
+            val = 200 if val == 50 else 50
+        img = np.zeros((h, w), np.uint8)
+        img[min_box[2]:min_box[3], min_box[0]:min_box[1]] = 100 if i == 15 else 200
+        img[colon[2]:colon[3], colon[0]:colon[1]] = 180
+        img[tens_box[2]:tens_box[3], tens_box[0]:tens_box[1]] = val
+        img[ones_box[2]:ones_box[3], ones_box[0]:ones_box[1]] = val
+        frames.append(np.stack([img] * 3, axis=-1))
+
+    board_box = (0, 0, 1, 1)   # nowhere near the synthetic clock - a no-op exclusion
+    cands = find_clock_regions(frames, board_box)
+    assert len(cands) == 1
+    box = cands[0]
+    # the recovered box must span from the (rarely-changing) minutes digit
+    # through to the ones-of-seconds digit, not just the fast-changing pair
+    assert box.x <= min_box[0]
+    assert box.x + box.w >= ones_box[1]
+
+
+def test_side_for_box_uses_board_position_and_flip():
+    board_box = (100, 200, 400, 400)   # x, y, w, h - vertical center at y=400
+    top_box = ClockBox(x=500, y=100, w=50, h=30)
+    bottom_box = ClockBox(x=500, y=650, w=50, h=30)
+
+    # standard orientation: bottom of screen/board is White
+    assert side_for_box(bottom_box, board_box, flipped=False) == "white"
+    assert side_for_box(top_box, board_box, flipped=False) == "black"
+    # flipped: Black is shown at the bottom instead
+    assert side_for_box(bottom_box, board_box, flipped=True) == "black"
+    assert side_for_box(top_box, board_box, flipped=True) == "white"
+
+
+def test_clock_at_times_takes_the_last_known_value_at_or_before_each_query():
+    readings = [
+        ClockReading(10.0, 300.0),
+        ClockReading(11.0, None),      # a dropped/unreadable frame in between
+        ClockReading(12.0, 298.0),
+        ClockReading(15.0, 295.0),
+    ]
+    # queries land exactly on a reading, between readings, and before the first
+    assert clock_at_times(readings, [10.0, 11.5, 12.0, 13.5, 15.0]) == \
+        [300.0, 300.0, 298.0, 298.0, 295.0]
+    assert clock_at_times(readings, [5.0]) == [None]   # before any reading at all
 
 
 def test_reject_outliers_keeps_a_real_increment():

@@ -53,6 +53,14 @@ class Game:
     # assigning them the confirming reading's timestamp is honest about that
     # rather than fabricating false precision by interpolating.
     move_seconds: list[float] = field(default_factory=list)
+    # Remaining time (seconds) on each player's on-screen clock right after
+    # each move, parallel to moves_san - populated by scan.py as a
+    # post-reconstruction step (clock_read.py knows nothing about games or
+    # moves, only about a video window's clock pixels), left empty when
+    # clock reading wasn't attempted or didn't find a usable clock for this
+    # game.
+    clock_white_seconds: list[float | None] = field(default_factory=list)
+    clock_black_seconds: list[float | None] = field(default_factory=list)
     clean: int = 0             # transitions resolved by a unique single legal move
     bridged: int = 0          # transitions resolved by a unique multi-move sequence
     skipped: int = 0          # readings stepped over as noise
