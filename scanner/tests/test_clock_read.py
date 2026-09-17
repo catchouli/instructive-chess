@@ -389,7 +389,12 @@ def test_find_clock_regions_recovers_a_rarely_changing_minutes_digit():
     # pixel content, not just the changing blob.
     h, w = 60, 120
     min_box = _inset(20, 39, 15, 44)
-    colon = (44, 47, 23, 36)
+    # two small dots with a real gap between them, not a solid block - a
+    # solid rectangle doesn't read as a colon to _is_colon (see below), and
+    # find_clock_regions now specifically requires a real colon-shaped
+    # character to accept a candidate (see its own docstring)
+    colon_dot1 = (44, 47, 25, 28)
+    colon_dot2 = (44, 47, 32, 35)
     tens_box = _inset(52, 71, 15, 44)
     ones_box = _inset(76, 95, 15, 44)
 
@@ -400,7 +405,8 @@ def test_find_clock_regions_recovers_a_rarely_changing_minutes_digit():
             val = 200 if val == 50 else 50
         img = np.zeros((h, w), np.uint8)
         img[min_box[2]:min_box[3], min_box[0]:min_box[1]] = 100 if i == 15 else 200
-        img[colon[2]:colon[3], colon[0]:colon[1]] = 180
+        img[colon_dot1[2]:colon_dot1[3], colon_dot1[0]:colon_dot1[1]] = 180
+        img[colon_dot2[2]:colon_dot2[3], colon_dot2[0]:colon_dot2[1]] = 180
         img[tens_box[2]:tens_box[3], tens_box[0]:tens_box[1]] = val
         img[ones_box[2]:ones_box[3], ones_box[0]:ones_box[1]] = val
         frames.append(np.stack([img] * 3, axis=-1))
