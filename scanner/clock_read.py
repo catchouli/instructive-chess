@@ -96,34 +96,52 @@ def find_clock_regions(frames: list[np.ndarray], board_box) -> list[ClockBox]:
     cands = []
     for i in range(1, num):
         x, y, w, h, area = stats[i]
-        if area < 60 or w < 25 or h < 10 or h > 60:
+        # A clock's *tens*-of-seconds digit only changes once every ~10
+        # ticks; a player whose turns come in short, scattered bursts
+        # (confirmed on a real video: ~26 ticks total spread across a
+        # 7-minute game) can go the whole window without a single tens
+        # rollover landing between two consecutive sampled frames, leaving
+        # only the ones-of-seconds digit's own single-character blob ever
+        # clearing the frequency threshold - narrower and closer to square
+        # than a real two-digit "SS" pair. Keeping the width/aspect gate
+        # tight enough for a normal two-digit blob silently dropped this
+        # clock's only candidate before segmentation ever got a chance to
+        # validate it - loosened to admit a single digit; segmentation
+        # (below) is the real filter against non-clock UI clutter, not size.
+        if area < 60 or w < 10 or h < 10 or h > 60:
             continue
         aspect = w / max(h, 1)
-        if not (1.2 <= aspect <= 10.0):
+        if not (0.4 <= aspect <= 10.0):
             continue
         # Validate by segmentation, not just size/aspect: a webcam or other
         # moving UI clutter can easily match the size/shape filters above by
         # coincidence, but won't cleanly segment into a plausible clock
         # character count the way real "M:SS"/"MM:SS"/"H:MM:SS" text does.
         #
-        # Try a modest pad first, then a much wider one to the left only if
-        # that fails: the blob itself is sometimes narrower than the full
-        # clock label - the frequency mask only lights up pixels that change
-        # often enough to clear _CHANGE_LO, and a minutes digit on a long
-        # time control (10+ minutes) can change far too rarely over a whole
-        # game's worth of frames to ever qualify, leaving the minutes+colon
-        # portion invisible to the mask entirely even though the seconds
-        # pair right next to it tickets every frame (confirmed on a real
-        # video: a 149px-wide "09:41" label localized as just a 54px "41"
-        # blob over a ~7-minute game, but the same clock's full label was
-        # already inside the ordinary small pad over a ~2-minute window,
-        # where a minutes change happened to occur). Trying the wide pad
-        # only as a fallback - not unconditionally - avoids overshooting
-        # into a neighboring UI element (or the board itself, invisible to
-        # this pass since only the frequency mask excludes it) on the
-        # common case where the narrow pad already had the whole label.
+        # Try a modest pad first, then progressively wider ones to the left
+        # only if that fails: the blob itself is sometimes narrower than the
+        # full clock label - the frequency mask only lights up pixels that
+        # change often enough to clear _CHANGE_LO, and a slower-moving part
+        # of the label (a minutes digit on a long time control, or even the
+        # tens-of-seconds digit for a player whose turns come in short,
+        # scattered bursts) can change far too rarely over a whole game's
+        # worth of frames to ever qualify - leaving only whichever part
+        # ticks fastest (confirmed on two real videos: a 149px-wide "09:41"
+        # localized as just a 54px seconds-pair blob when only the minutes
+        # digit was too slow; a 22px single ones-of-seconds digit when the
+        # tens digit was too, on a clock that only ticked ~26 times across
+        # the whole window). How much padding recovers the rest scales with
+        # how much of the label is already missing - a lone digit needs
+        # several multiples of its own width to reach all the way back to
+        # the minutes column, not just enough for one adjacent digit - so
+        # widen in escalating steps rather than jumping straight to (or
+        # stopping at) one fixed guess. Trying wider pads only as a fallback
+        # - not unconditionally - avoids overshooting into a neighboring UI
+        # element (or the board itself, invisible to this pass since only
+        # the frequency mask excludes it) on the common case where the
+        # narrow pad already had the whole label.
         found = None
-        for left_pad in (pad, max(pad, 2 * w)):
+        for left_pad in (pad, *(max(pad, m * w) for m in (2, 3, 4, 6, 8))):
             px0, py0 = max(0, x - left_pad), max(0, y - pad)
             px1, py1 = min(w_img, x + w + pad), min(h_img, y + h + pad)
             crop = ref[py0:py1, px0:px1]
@@ -131,8 +149,21 @@ def find_clock_regions(frames: list[np.ndarray], board_box) -> list[ClockBox]:
             if res is None:
                 continue
             mask, bbox = res
-            n_chars = len(_segment_chars(mask, bbox))
-            if n_chars in (4, 5, 7):
+            chars = _segment_chars(mask, bbox)
+            # A character count alone is too weak a signature once the
+            # size/aspect gate above is loose enough to admit a single
+            # digit: plenty of non-clock UI text (a scoreboard, a move
+            # counter, chat) can coincidentally segment into 4-5 blobs too,
+            # especially once the escalating wide-pad fallback is free to
+            # grow the crop across a big stretch of the frame (confirmed on
+            # a real video: two sizeable false candidates elsewhere on
+            # screen outranked - by pixel area - the real, much smaller
+            # clock once this loosening was in place, and clock_read.py had
+            # no way to tell them apart). A colon is a much more specific
+            # signature real clock text always has and generic UI text
+            # essentially never coincidentally produces - require at least
+            # one segmented character to look like one.
+            if len(chars) in (4, 5, 7) and any(_is_colon(mask, c) for c in chars):
                 found = (px0, py0, px1, py1)
                 break
         if found is None:
