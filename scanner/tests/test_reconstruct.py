@@ -138,6 +138,41 @@ def test_has_wasted_round_trip_ignores_a_developing_capture():
     assert not reconstruct._has_wasted_round_trip(board, path)
 
 
+def test_has_wasted_round_trip_ignores_a_capture_and_recapture():
+    # exd4 cxd4: a genuinely different pawn ends up on d4 than the one that
+    # started there (the original was captured and is gone) - the square's
+    # occupant *type* reverts (pawn -> pawn) but no specific piece actually
+    # round-tripped. A real bug: this was flagged by an earlier, cruder
+    # version of the check that only compared resulting type/color per
+    # square, dropping a real 82-ply game's confidence from 0.87 to 0.54 on
+    # an ordinary isolated-pawn trade.
+    board = chess.Board()
+    for san in ("c4", "e6", "g3", "d5", "Bg2", "Nf6", "Nf3", "d4", "O-O", "c5", "e3", "Nc6"):
+        board.push_san(san)
+    path = []
+    b = board.copy()
+    for san in ("exd4", "cxd4", "Na3"):
+        mv = b.parse_san(san)
+        path.append(mv)
+        b.push(mv)
+    assert not reconstruct._has_wasted_round_trip(board, path)
+
+
+def test_has_wasted_round_trip_ignores_ordinary_castling():
+    # castling moves both the king and the rook - neither should look like
+    # it "returned" anywhere just from the act of castling itself
+    board = chess.Board()
+    for san in ("e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"):
+        board.push_san(san)
+    path = []
+    b = board.copy()
+    for san in ("O-O", "Nf6", "d3", "d6"):
+        mv = b.parse_san(san)
+        path.append(mv)
+        b.push(mv)
+    assert not reconstruct._has_wasted_round_trip(board, path)
+
+
 def test_a_single_misread_frame_does_not_trigger_a_spurious_bridge():
     # Real bug, found on a real video: one frame misread a pawn capture
     # (fxg5) as the captured square simply going empty - no piece landing on
