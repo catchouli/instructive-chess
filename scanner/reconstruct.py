@@ -180,6 +180,44 @@ def _relevant_squares(cur: str, target: str) -> set[chess.Square]:
     return {_square_of(i) for i in range(64) if cur[i] != target[i]}
 
 
+def _has_wasted_round_trip(board: chess.Board, path: list[chess.Move]) -> bool:
+    """True if some square that started *occupied* ends up with that exact
+    same occupant again, despite reading differently partway through *path*.
+
+    A piece that moves away and then all the way back to its own starting
+    square (or a second, identical piece that ends up standing in for it)
+    accomplishes nothing on the board - real games don't do this except in
+    vanishingly rare repetition-seeking lines, so a candidate sequence
+    containing one is almost always a coincidental, spurious way of matching
+    a *wrong* target (typically a single bad frame misreading a piece as
+    simply missing) rather than the true line of play. Confirmed on a real
+    video: a single frame that misread one pawn capture as an empty square
+    got "explained" by a legal-but-nonsensical 5-ply sequence - a bishop and
+    a rook both taking an excursion and returning to their exact starting
+    squares - purely because it happened to reach an exact pixel match,
+    badly corrupting every move recorded after it.
+
+    Deliberately restricted to squares that started *occupied*: an empty
+    square constantly and harmlessly reverts to empty as unrelated pieces
+    pass through it (a bishop developing through b5 and on to capture a
+    knight, say) - that's ordinary play, not a wasted round trip, and
+    flagging it would reject real multi-ply bridges too (confirmed: an
+    earlier, broader version of this check - any square reverting at all,
+    not just occupied ones - broke a genuine bishop-develops-and-captures
+    bridge in exactly this way)."""
+    start = _placement_of(board)
+    b = board.copy(stack=False)
+    ever_differed = [False] * 64
+    for mv in path:
+        b.push(mv)
+        now = _placement_of(b)
+        for i in range(64):
+            if now[i] != start[i]:
+                ever_differed[i] = True
+    end = _placement_of(b)
+    return any(start[i] != "." and ever_differed[i] and end[i] == start[i] for i in range(64))
+
+
 def _find_sequence(board: chess.Board, target: str, max_depth: int):
     """Moves from *board* that we can be sure of on the way to placement *target*.
 
@@ -191,6 +229,12 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int):
     match is almost certainly the true story and must be preferred. The
     shallowest fuzzy match is remembered as a fallback and only used if no
     exact match turns up by max_depth.
+
+    An exact match is only trusted if it doesn't contain a wasted round trip
+    (see _has_wasted_round_trip) - otherwise it's discarded and the search
+    keeps going, since a "deeper exact match" that only achieves the target
+    by shuffling a piece there and back is exactly the kind of spurious
+    coincidence that preferring exact matches was never meant to reward.
 
     Returns (moves, depth) with a unique/shared-prefix move list, or
     (None, reason) where reason is 'none', 'ambiguous' or 'budget'.
@@ -224,6 +268,8 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int):
                     # there is one (see docstring)
                     nxt.append((b.copy(stack=False), path + [mv]))
                 b.pop()
+        if exact:
+            exact = [p for p in exact if not _has_wasted_round_trip(board, p)]
         if exact:
             if len(exact) == 1:
                 return exact[0], depth
