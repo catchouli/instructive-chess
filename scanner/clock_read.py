@@ -105,16 +105,39 @@ def find_clock_regions(frames: list[np.ndarray], board_box) -> list[ClockBox]:
         # moving UI clutter can easily match the size/shape filters above by
         # coincidence, but won't cleanly segment into a plausible clock
         # character count the way real "M:SS"/"MM:SS"/"H:MM:SS" text does.
-        px0, py0 = max(0, x - pad), max(0, y - pad)
-        px1, py1 = min(w_img, x + w + pad), min(h_img, y + h + pad)
-        crop = ref[py0:py1, px0:px1]
-        res = _tight_ink_bbox(crop)
-        if res is None:
+        #
+        # Try a modest pad first, then a much wider one to the left only if
+        # that fails: the blob itself is sometimes narrower than the full
+        # clock label - the frequency mask only lights up pixels that change
+        # often enough to clear _CHANGE_LO, and a minutes digit on a long
+        # time control (10+ minutes) can change far too rarely over a whole
+        # game's worth of frames to ever qualify, leaving the minutes+colon
+        # portion invisible to the mask entirely even though the seconds
+        # pair right next to it tickets every frame (confirmed on a real
+        # video: a 149px-wide "09:41" label localized as just a 54px "41"
+        # blob over a ~7-minute game, but the same clock's full label was
+        # already inside the ordinary small pad over a ~2-minute window,
+        # where a minutes change happened to occur). Trying the wide pad
+        # only as a fallback - not unconditionally - avoids overshooting
+        # into a neighboring UI element (or the board itself, invisible to
+        # this pass since only the frequency mask excludes it) on the
+        # common case where the narrow pad already had the whole label.
+        found = None
+        for left_pad in (pad, max(pad, 2 * w)):
+            px0, py0 = max(0, x - left_pad), max(0, y - pad)
+            px1, py1 = min(w_img, x + w + pad), min(h_img, y + h + pad)
+            crop = ref[py0:py1, px0:px1]
+            res = _tight_ink_bbox(crop)
+            if res is None:
+                continue
+            mask, bbox = res
+            n_chars = len(_segment_chars(mask, bbox))
+            if n_chars in (4, 5, 7):
+                found = (px0, py0, px1, py1)
+                break
+        if found is None:
             continue
-        mask, bbox = res
-        n_chars = len(_segment_chars(mask, bbox))
-        if n_chars not in (4, 5, 7):
-            continue
+        px0, py0, px1, py1 = found
         cands.append((area, ClockBox(px0, py0, px1 - px0, py1 - py0)))
     cands.sort(key=lambda t: -t[0])
     return [box for _, box in cands[:2]]
@@ -931,4 +954,40 @@ def _reject_outliers(readings: list[ClockReading], tol: float = 3.0) -> list[Clo
             ok_next = abs(v - (nv + (nt - t))) <= tol
         if not ok_prev and not ok_next:
             out[i] = ClockReading(t, None)
+    return out
+
+
+def side_for_box(clock_box: ClockBox, board_box, flipped: bool) -> str:
+    """Which player's clock this is, given the board's own orientation.
+
+    Broadcast layouts consistently show each player's own info/clock on the
+    same side of the screen as their own pieces on the board (opponent on
+    top, yourself on the bottom) - so a clock above the board's vertical
+    center belongs to whoever's pieces are on top, and a clock below it
+    belongs to whoever's on the bottom. `flipped` (already known from board
+    orientation - see reconstruct.py) says which color that bottom side is.
+    """
+    bx, by, bw, bh = board_box.as_tuple() if hasattr(board_box, "as_tuple") else board_box
+    top = clock_box.y < by + bh / 2
+    bottom_side = "black" if flipped else "white"
+    top_side = "white" if flipped else "black"
+    return top_side if top else bottom_side
+
+
+def clock_at_times(readings: list[ClockReading], query_times: list[float]) -> list[float | None]:
+    """The clock's value at each of `query_times`, taken from the most
+    recent sampled reading at or before it - a clock only ever moves
+    forward between samples, so the last known value is the best available
+    answer for "what did it read at this instant". `query_times` must be
+    sorted ascending (true of a game's own move_seconds, which this is
+    built to be queried with)."""
+    ordered = sorted((r.t, r.seconds) for r in readings if r.seconds is not None)
+    out: list[float | None] = []
+    j = 0
+    last: float | None = None
+    for qt in query_times:
+        while j < len(ordered) and ordered[j][0] <= qt:
+            last = ordered[j][1]
+            j += 1
+        out.append(last)
     return out

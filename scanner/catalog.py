@@ -11,8 +11,12 @@ from reconstruct import Game
 DATA_FILE = Path(__file__).resolve().parents[1] / "web" / "data" / "games.json"
 
 
+def _clock_seconds(values: list[float | None]) -> list[int | None]:
+    return [None if v is None else int(round(v)) for v in values]
+
+
 def _entry(source: Source, game: Game, index: int) -> dict:
-    return {
+    entry = {
         "id": f"{source.video_id}-{index + 1}",
         "video_id": source.video_id,
         "video_url": source.url,
@@ -27,6 +31,14 @@ def _entry(source: Source, game: Game, index: int) -> dict:
         "confidence": round(game.confidence, 3),
         "scanned_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    # Only present when clock reading found a usable clock for this game -
+    # older/unread entries simply omit these rather than carry an all-null
+    # array, so the web app can tell "not attempted" from "attempted, empty".
+    if game.clock_white_seconds:
+        entry["clock_white_seconds"] = _clock_seconds(game.clock_white_seconds)
+    if game.clock_black_seconds:
+        entry["clock_black_seconds"] = _clock_seconds(game.clock_black_seconds)
+    return entry
 
 
 def _sort_key(e: dict):

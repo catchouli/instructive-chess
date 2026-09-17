@@ -23,9 +23,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import board_detect          # noqa: E402
 import catalog               # noqa: E402
+import clock_read            # noqa: E402
 import download              # noqa: E402
 import recognize             # noqa: E402
 import reconstruct           # noqa: E402
+
+CLOCK_MIN_COVERAGE = 0.5   # a candidate clock region must read at least this
+                           # fraction of its window's frames to be trusted
+CLOCK_MIN_FRAMES = 20      # a window shorter than this can't bootstrap a
+                           # wrap-anchor (see clock_read.py) reliably enough
+                           # to be worth attempting at all
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -41,6 +48,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--min-confidence", type=float, default=0.6,
                    help="drop games below this reconstruction confidence (default 0.6)")
     p.add_argument("--dry-run", action="store_true", help="print games, do not write games.json")
+    p.add_argument("--no-clocks", action="store_true", help="skip reading on-screen clocks")
     return p.parse_args(argv)
 
 
@@ -83,14 +91,57 @@ def sample_frames(path: Path, start: float, end: float, n: int):
     return out
 
 
+def fmt_clock(seconds: float | None) -> str:
+    if seconds is None:
+        return "?"
+    seconds = int(seconds)
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> None:
+    """Best-effort: read each game's own on-screen clock(s) over just that
+    game's video window - bounded memory regardless of how long the source
+    video is, unlike decoding the whole thing into clock_read at once - and
+    attach remaining-time-per-move to the game object.
+
+    Leaves clock_*_seconds at their empty default (see reconstruct.Game) for
+    any game this can't do confidently for: a missing clock reading next to
+    a real move is far less harmful than a wrong one, and clock_read.py is
+    already deliberately conservative about reporting a value at all (see
+    its module docstring).
+    """
+    for g in games:
+        if not g.move_seconds:
+            continue
+        start = max(0.0, g.start_seconds - 1.0)
+        end = g.move_seconds[-1] + 3.0
+        frames, times = [], []
+        for ts, frame in iter_frames(path, 1.0, start, end):
+            frames.append(frame)
+            times.append(ts)
+        if len(frames) < CLOCK_MIN_FRAMES:
+            continue
+        for cbox in clock_read.find_clock_regions(frames, board_box):
+            readings = clock_read.read_clock(frames, times, cbox)
+            frac = sum(1 for r in readings if r.seconds is not None) / len(readings)
+            if frac < CLOCK_MIN_COVERAGE:
+                continue
+            side = clock_read.side_for_box(cbox, board_box, g.flipped)
+            values = clock_read.clock_at_times(readings, g.move_seconds)
+            if side == "white":
+                g.clock_white_seconds = values
+            else:
+                g.clock_black_seconds = values
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
-    print(f"[1/4] resolving {args.target}")
+    print(f"[1/5] resolving {args.target}")
     src = download.fetch(args.target, max_height=args.max_height)
     print(f"      {src.title!r} - {src.channel or 'unknown channel'}  ({src.path.name})")
 
-    print("[2/4] locating board")
+    print("[2/5] locating board")
     if args.crop:
         x, y, w, h = (int(v) for v in args.crop.split(","))
         box = board_detect.Box(x, y, w, h, score=1.0)
@@ -112,7 +163,7 @@ def main(argv: list[str]) -> int:
         print(f"      wrote {out}")
         return 0
 
-    print(f"[3/4] scanning frames @ {args.fps} fps")
+    print(f"[3/5] scanning frames @ {args.fps} fps")
     model: recognize.BoardModel | None = None
     readings: list[tuple[float, str | None]] = []
     n_board = 0
@@ -143,17 +194,30 @@ def main(argv: list[str]) -> int:
         return 3
     print(f"      {len(readings)} frames, {n_board} with a readable board")
 
-    print("[4/4] reconstructing games")
+    print("[4/5] reconstructing games")
     readings = recognize.vote_stream(readings)
     games = reconstruct.reconstruct(readings)
     kept = [g for g in games if g.confidence >= args.min_confidence and g.ply >= 2]
     print(f"      {len(games)} games found, {len(kept)} kept "
           f"(confidence >= {args.min_confidence})")
 
+    if args.no_clocks:
+        print("[5/5] reading clocks - skipped (--no-clocks)")
+    else:
+        print("[5/5] reading clocks")
+        annotate_clocks(src.path, box, kept)
+        n_clocked = sum(1 for g in kept if g.clock_white_seconds or g.clock_black_seconds)
+        print(f"      clock data for {n_clocked}/{len(kept)} games")
+
     for i, g in enumerate(kept):
         flip = " [flipped]" if g.flipped else ""
+        clocks = ""
+        if g.clock_white_seconds or g.clock_black_seconds:
+            w = fmt_clock(g.clock_white_seconds[-1]) if g.clock_white_seconds else "?"
+            b = fmt_clock(g.clock_black_seconds[-1]) if g.clock_black_seconds else "?"
+            clocks = f"  clocks(end) W={w} B={b}"
         print(f"\n  game {i + 1}: {g.ply} plies  conf={g.confidence:.2f}  "
-              f"t={int(g.start_seconds)}s{flip}")
+              f"t={int(g.start_seconds)}s{flip}{clocks}")
         print(f"    {g.pgn()[:240]}")
 
     if args.dry_run:

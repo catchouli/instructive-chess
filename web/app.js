@@ -128,10 +128,14 @@ function detail(g) {
   moveWatch.className = 'move-watch';
   moveWatch.target = '_blank';
   moveWatch.rel = 'noopener';
-  boardCol.append(board, nav, moveWatch);
+  const clockLabel = document.createElement('div');
+  clockLabel.className = 'clock-label';
+  boardCol.append(board, nav, clockLabel, moveWatch);
 
   const positions = replay(g.moves_san);
   const hasTimes = Array.isArray(g.move_seconds) && g.move_seconds.length === g.moves_san.length;
+  const hasClocks = (Array.isArray(g.clock_white_seconds) && g.clock_white_seconds.length === g.moves_san.length) ||
+    (Array.isArray(g.clock_black_seconds) && g.clock_black_seconds.length === g.moves_san.length);
   let ply = g.moves_san.length;
   const draw = () => {
     board.innerHTML = boardSvg(positions[ply]);
@@ -145,6 +149,17 @@ function detail(g) {
       moveWatch.hidden = false;
     } else {
       moveWatch.hidden = true;
+    }
+    if (hasClocks && ply > 0) {
+      const w = g.clock_white_seconds?.[ply - 1];
+      const b = g.clock_black_seconds?.[ply - 1];
+      const parts = [];
+      if (w != null) parts.push(`White ${fmtTime(w)}`);
+      if (b != null) parts.push(`Black ${fmtTime(b)}`);
+      clockLabel.textContent = parts.length ? `⏱ ${parts.join(' · ')}` : '';
+      clockLabel.hidden = parts.length === 0;
+    } else {
+      clockLabel.hidden = true;
     }
   };
   prev.onclick = () => { ply = Math.max(0, ply - 1); draw(); };
