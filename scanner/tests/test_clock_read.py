@@ -26,6 +26,7 @@ from clock_read import (  # noqa: E402
     _cluster_votes,
     _gap_threshold,
     _hole_count,
+    _is_colon,
     _reject_outliers,
     _relative_ticks,
     _segment_chars,
@@ -100,6 +101,22 @@ def test_segment_chars_counts_four_for_mm_ss():
     mask[2:8, 16:19] = True  # "1"
     chars = _segment_chars(mask, (0, 19, 0, 9))
     assert len(chars) == 4
+
+
+def test_is_colon_distinguishes_sparse_dots_from_a_digit():
+    # a colon: two small ink bands with a real gap - at least one fully-empty
+    # row between its topmost and bottommost ink
+    mask = np.zeros((16, 6), np.uint8)
+    mask[4:6, 2:4] = 1
+    mask[10:12, 2:4] = 1
+    assert _is_colon(mask, (0, 5, 0, 15)) is True
+
+    # a digit: one continuous vertical stroke, even a hollow one like "0" -
+    # every row from top to bottom ink has *some* ink, so no internal gap
+    digit = np.zeros((16, 6), np.uint8)
+    digit[1:15, 0:6] = 1
+    digit[5:11, 2:4] = 0   # hollow center - still leaves ink in every row
+    assert _is_colon(digit, (0, 5, 0, 15)) is False
 
 
 def test_bootstrap_anchors_ones_digit_from_tens_wrap():
