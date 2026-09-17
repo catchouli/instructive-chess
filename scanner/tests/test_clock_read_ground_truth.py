@@ -42,18 +42,23 @@ CACHE = Path(__file__).resolve().parents[1] / "cache"
 # redesign, but silently wrong a meaningful chunk of the time (confirmed by
 # hand - e.g. KfuyDm5uksI's "3:00" opening was previously read as "6:10" for
 # several frames in a row, self-consistently, with no way to tell from the
-# output alone). The current numbers are lower but every reading that comes
-# back has been checked against the real on-screen value. Don't raise the
-# coverage floor without re-verifying spot checks still pass; a real
-# improvement should let you *add* more spot checks, not just clear a bigger
-# fraction.
+# output alone). A later fix (requiring a segment to confirm itself with at
+# least 2 independent wrap-anchors before it's allowed to contribute to the
+# shared digit templates) recovered most of that coverage back honestly -
+# KfuyDm5uksI went from 20/120 to 101/120 correct frames from that change
+# alone, including a second, previously-unverified game later in the same
+# window that spot-check (1093, 119.0) below now confirms reads correctly.
+# Don't raise these floors without re-verifying spot checks still pass by
+# hand against the actual video; a real improvement should let you *add*
+# more spot checks; a bigger fraction on its own proves nothing.
 CASES = {
-    "KfuyDm5uksI": (995, 0.30, [
+    "KfuyDm5uksI": (995, 0.75, [
         (995, 180.0),   # "3:00"
         (1004, 179.0),  # "2:59"
         (1014, 169.0),  # "2:49"
+        (1093, 119.0),  # "1:59" - a second, later game in the same window
     ]),
-    "9h8UcYJZz-Q": (45, 0.02, [
+    "9h8UcYJZz-Q": (45, 0.90, [
         (162, 494.0),   # "08:14"
         (163, 493.0),   # "08:13"
     ]),

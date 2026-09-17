@@ -164,6 +164,28 @@ def _tight_ink_bbox(gray: np.ndarray, margin: int = 4, thresh: int = 40):
     return mask, (xs.min(), xs.max(), ys.min(), ys.max())
 
 
+def _is_colon(mask: np.ndarray, char: tuple[int, int, int, int]) -> bool:
+    """A colon is two dots with a real gap between them: somewhere between
+    its topmost and bottommost ink, at least one full row has none at all.
+    A digit's ink, even a hollow one like "0", is one continuous vertical
+    stroke - every row from its top to its bottom has *some* ink, just not
+    always the same columns. This is a purely topological check (does the
+    ink region have an internal gap or not), which held up cleanly across
+    two very different clock fonts; an earlier version compared the overall
+    fraction of rows with ink to a fixed threshold; and that number turned
+    out to depend heavily on how tall the colon's dots render relative to
+    the digit height on a given clock, so what counted as "enough gap" on
+    one font wrongly flagged a real colon as a digit on another."""
+    x0, x1, y0, y1 = char
+    region = mask[y0:y1 + 1, x0:x1 + 1]
+    ink_rows = region.sum(axis=1) > 0
+    nz = np.nonzero(ink_rows)[0]
+    if len(nz) == 0:
+        return False
+    first, last = nz[0], nz[-1]
+    return not bool(ink_rows[first:last + 1].all())
+
+
 def _segment_chars(mask: np.ndarray, bbox, min_gap: int = 0, min_width: int = 2):
     """Split a tight ink mask into per-character column ranges using vertical
     projection gaps (classic OCR segmentation - works well for the roughly
@@ -414,10 +436,29 @@ def _bootstrap_ones_digits(ones_glyphs: list[np.ndarray], tens_glyphs: list[np.n
     nearly every frame instead of the ~1-in-10 a real wrap should produce,
     fabricating a wrap-anchor almost every tick).
     """
+    ticks, _ = _relative_ticks(ones_glyphs, seg_id, ones_thresh)
+    anchors_by_seg = _wrap_anchors(ones_glyphs, tens_glyphs, seg_id, ones_thresh, tens_thresh)
+
+    values: list[int | None] = [None] * len(ones_glyphs)
+    for i in range(len(ones_glyphs)):
+        candidates = anchors_by_seg.get(seg_id[i])
+        if not candidates:
+            continue
+        nearest = min(candidates, key=lambda a: abs(ticks[i] - a))
+        values[i] = (nearest - ticks[i]) % 10
+    return values
+
+
+def _wrap_anchors(ones_glyphs: list[np.ndarray], tens_glyphs: list[np.ndarray], seg_id: list[int],
+                   ones_thresh: float, tens_thresh: float) -> dict[int, list[int]]:
+    """The frame right before ones and tens change *together* is "0" - find
+    every such wrap-anchor per segment (see _bootstrap_ones_digits, which
+    uses this to label digits; read_clock also uses it directly to decide
+    which segments are trustworthy enough to contribute to the shared
+    templates - see the note there)."""
     ticks, ones_changed = _relative_ticks(ones_glyphs, seg_id, ones_thresh)
     _, tens_changed = _relative_ticks(tens_glyphs, seg_id, tens_thresh)
 
-    # anchor: the frame right before a combined ones+tens change is "0"
     anchors_by_seg: dict[int, list[int]] = {}
     for i in range(1, len(ones_glyphs)):
         if ones_changed[i] and tens_changed[i]:
@@ -429,21 +470,21 @@ def _bootstrap_ones_digits(ones_glyphs: list[np.ndarray], tens_glyphs: list[np.n
     # threshold assumed). Greedily thin them out - first candidate in a
     # cluster wins, anything within 8 ticks of an already-accepted anchor is
     # dropped - rather than trusting every one of them as a genuine "0".
+    #
+    # (Tried requiring every kept anchor to share the same tick%10 phase,
+    # on the theory that true wraps are exactly 10 apart so a spurious one
+    # would stand out at a different phase - measured on a real video, most
+    # anchors *are* genuine wraps but each is independently off by 1-3
+    # ticks from its true position, so their phases scatter across almost
+    # every value and no real majority phase exists to filter by. That
+    # made things worse, not better; reverted.)
     for seg, cands in anchors_by_seg.items():
         thinned: list[int] = []
         for t in sorted(cands):
             if not thinned or t - thinned[-1] >= 8:
                 thinned.append(t)
         anchors_by_seg[seg] = thinned
-
-    values: list[int | None] = [None] * len(ones_glyphs)
-    for i in range(len(ones_glyphs)):
-        candidates = anchors_by_seg.get(seg_id[i])
-        if not candidates:
-            continue
-        nearest = min(candidates, key=lambda a: abs(ticks[i] - a))
-        values[i] = (nearest - ticks[i]) % 10
-    return values
+    return anchors_by_seg
 
 
 def _build_templates(glyphs: list[np.ndarray], values: list[int | None],
@@ -645,14 +686,31 @@ def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> l
     if len(valid_idx) < 4:
         return [ClockReading(t, None) for t in times]
 
+    # The colon can occasionally fail to segment at all (its ink is faint
+    # enough some frames that _tight_ink_bbox's threshold misses it), which
+    # silently shifts every character after it by one position: "08:58"
+    # loses its colon and segments as 4 characters - the same count a real
+    # 4-char "M:SS" frame has, but here they're MM:SS's two minute digits
+    # plus the two seconds digits, not one minute digit plus a colon. Don't
+    # assume which is which by a fixed count; check whether the character
+    # 3-from-the-end actually looks like a colon (see _is_colon) and only
+    # drop it from the minutes reading if it does.
+    per_frame_minute_chars: dict[int, tuple] = {}
+    for i in valid_idx:
+        chars, mask = per_frame_chars[i], per_frame_mask[i]
+        if _is_colon(mask, chars[-3]):
+            per_frame_minute_chars[i] = chars[:-3]
+        else:
+            per_frame_minute_chars[i] = chars[:-2]
+
     ones_glyphs, tens_glyphs = [], []
-    n_minute_slots = max(len(per_frame_chars[i]) - 3 for i in valid_idx)
+    n_minute_slots = max((len(per_frame_minute_chars[i]) for i in valid_idx), default=0)
     minute_slot_glyphs: list[list[np.ndarray | None]] = [[] for _ in range(n_minute_slots)]
     for i in valid_idx:
         chars, mask = per_frame_chars[i], per_frame_mask[i]
         ones_glyphs.append(_char_glyph(mask, chars[-1]))
         tens_glyphs.append(_char_glyph(mask, chars[-2]))
-        minute_chars = chars[:-3]   # right-aligned: [-1]=ones-of-minutes, [-2]=tens-of-minutes, ...
+        minute_chars = per_frame_minute_chars[i]   # right-aligned: [-1]=ones-of-minutes, [-2]=tens-of-minutes, ...
         for s in range(n_minute_slots):
             pos = len(minute_chars) - 1 - s
             minute_slot_glyphs[s].append(_char_glyph(mask, minute_chars[pos]) if pos >= 0 else None)
@@ -665,7 +723,24 @@ def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> l
     if not any(v is not None for v in ones_boot):
         return [ClockReading(t, None) for t in times]
 
-    ones_templates = _build_templates(ones_glyphs, ones_boot, ones_thresh)
+    # A segment anchored by only one observed wrap has no way to check
+    # itself: if that single wrap was mistimed (same/different misjudged
+    # right at that moment), every one of its labels is shifted by a
+    # constant with nothing locally inconsistent to catch it (measured on
+    # a real video: a whole digit's worth of examples, labeled "1", that
+    # were actually all "2"). Two or more wraps at least confirm each other
+    # were counted correctly against each other. Templates are shared
+    # across every segment in this clock, so a single under-verified
+    # segment corrupting one digit's template would silently break reading
+    # for every *other* segment too - only let well-confirmed segments
+    # vote on what a digit looks like. An under-verified segment can still
+    # be read (below) once templates exist from segments that did qualify.
+    wrap_anchors = _wrap_anchors(ones_glyphs, tens_glyphs, seg_id, ones_thresh, tens_thresh)
+    trusted_segs = {seg for seg, anchors in wrap_anchors.items() if len(anchors) >= 2}
+    template_labels = [v if v is not None and seg_id[k] in trusted_segs else None
+                        for k, v in enumerate(ones_boot)]
+
+    ones_templates = _build_templates(ones_glyphs, template_labels, ones_thresh)
     if sum(t is not None for t in ones_templates) < 10:
         return [ClockReading(t, None) for t in times]
 
@@ -685,7 +760,7 @@ def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> l
     # the next one).
     raw_guesses: dict[int, list[int]] = {}   # segment -> [guessed anchor values]
     for k, i in enumerate(valid_idx):
-        n_minutes_here = len(per_frame_chars[i]) - 3
+        n_minutes_here = len(per_frame_minute_chars[i])
         m_digits = [_classify(minute_slot_glyphs[s][k], ones_templates) for s in range(n_minutes_here)]
         tens_d = _classify(tens_glyphs[k], ones_templates, valid_digits=range(6))
         ones_d = ones_boot[k] if ones_boot[k] is not None else _classify(ones_glyphs[k], ones_templates)
