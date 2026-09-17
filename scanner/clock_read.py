@@ -444,47 +444,84 @@ def _bootstrap_ones_digits(ones_glyphs: list[np.ndarray], tens_glyphs: list[np.n
         candidates = anchors_by_seg.get(seg_id[i])
         if not candidates:
             continue
-        nearest = min(candidates, key=lambda a: abs(ticks[i] - a))
-        values[i] = (nearest - ticks[i]) % 10
+        nearest_tick, _ = min(candidates, key=lambda a: abs(ticks[i] - a[0]))
+        values[i] = (nearest_tick - ticks[i]) % 10
     return values
 
 
 def _wrap_anchors(ones_glyphs: list[np.ndarray], tens_glyphs: list[np.ndarray], seg_id: list[int],
-                   ones_thresh: float, tens_thresh: float) -> dict[int, list[int]]:
+                   ones_thresh: float, tens_thresh: float) -> dict[int, list[tuple[int, int]]]:
     """The frame right before ones and tens change *together* is "0" - find
     every such wrap-anchor per segment (see _bootstrap_ones_digits, which
     uses this to label digits; read_clock also uses it directly to decide
     which segments are trustworthy enough to contribute to the shared
-    templates - see the note there)."""
+    templates - see the note there).
+
+    Returns each anchor as (tick, frame index of the "before" glyph) rather
+    than just the tick value - _corrected_ticks needs the frame index too,
+    to count real tens-digit changes between two anchors directly instead
+    of inferring how many wraps occurred from the tick gap alone."""
     ticks, ones_changed = _relative_ticks(ones_glyphs, seg_id, ones_thresh)
     _, tens_changed = _relative_ticks(tens_glyphs, seg_id, tens_thresh)
 
-    anchors_by_seg: dict[int, list[int]] = {}
+    raw_by_seg: dict[int, list[tuple[int, int]]] = {}   # seg -> [(anchor tick, frame idx of "before" glyph)]
     for i in range(1, len(ones_glyphs)):
         if ones_changed[i] and tens_changed[i]:
-            anchors_by_seg.setdefault(seg_id[i - 1], []).append(ticks[i - 1])
+            raw_by_seg.setdefault(seg_id[i - 1], []).append((ticks[i - 1], i - 1))
 
-    # A real wrap recurs every 10 ticks; anchors packed much closer than
-    # that mean tens_changed fired on frames that didn't actually wrap (a
-    # noisier digit pair for this position/font than the calibrated
-    # threshold assumed). Greedily thin them out - first candidate in a
-    # cluster wins, anything within 8 ticks of an already-accepted anchor is
-    # dropped - rather than trusting every one of them as a genuine "0".
-    #
-    # (Tried requiring every kept anchor to share the same tick%10 phase,
-    # on the theory that true wraps are exactly 10 apart so a spurious one
-    # would stand out at a different phase - measured on a real video, most
-    # anchors *are* genuine wraps but each is independently off by 1-3
-    # ticks from its true position, so their phases scatter across almost
-    # every value and no real majority phase exists to filter by. That
-    # made things worse, not better; reverted.)
-    for seg, cands in anchors_by_seg.items():
-        thinned: list[int] = []
-        for t in sorted(cands):
-            if not thinned or t - thinned[-1] >= 8:
-                thinned.append(t)
+    anchors_by_seg: dict[int, list[tuple[int, int]]] = {}
+    for seg, cands in raw_by_seg.items():
+        # "ones and tens changed together" isn't proof of a genuine 9->0
+        # wrap on its own: a dropped-frames hiccup in the source stream can
+        # make the on-screen clock skip several seconds between two
+        # consecutive sampled frames, which just as easily flips both
+        # digits at once (measured on a real video: "09:41" -> "09:36" in
+        # one frame step, tripping this exact check) without it being a
+        # wrap at all. A genuine wrap's "before" glyph is always the same
+        # shape - literally a "0" - across every true wrap in a segment,
+        # while a skip's "before" glyph is whatever digit the skip happened
+        # to land on; with enough candidates to compare, the real wraps
+        # form the majority shape-cluster and a skip-induced impostor
+        # stands out as a minority of its own. Too few candidates to call a
+        # majority are left alone here; the >=2-anchor trust filter in
+        # read_clock is the backstop for those.
+        if len(cands) >= 3:
+            glyphs = [ones_glyphs[idx] for _, idx in cands]
+            biggest = max(_cluster_by_similarity(glyphs, ones_thresh), key=len)
+            cands = [cands[i] for i in biggest]
+        thinned: list[tuple[int, int]] = []
+        for tick, idx in sorted(cands):
+            if not thinned or tick - thinned[-1][0] >= 8:
+                thinned.append((tick, idx))
         anchors_by_seg[seg] = thinned
     return anchors_by_seg
+
+
+def _cluster_by_similarity(glyphs: list[np.ndarray], same_thresh: float) -> list[list[int]]:
+    """Greedily group glyph indices by mutual similarity - nearest existing
+    cluster mean if it's close enough, else start a new cluster - the same
+    running-average approach classification itself uses. Returns each
+    cluster's member indices (into `glyphs`), in creation order."""
+    means: list[np.ndarray] = []
+    counts: list[int] = []
+    members: list[list[int]] = []
+    for idx, g in enumerate(glyphs):
+        gf = g.astype(np.float32)
+        best_i, best_sim = -1, -1.0
+        for i, m in enumerate(means):
+            sim = _similarity(gf, m)
+            if sim > best_sim:
+                best_sim, best_i = sim, i
+        if best_i >= 0 and best_sim >= same_thresh:
+            n = counts[best_i]
+            means[best_i] = (means[best_i] * n + gf) / (n + 1)
+            counts[best_i] += 1
+            members[best_i].append(idx)
+        else:
+            means.append(gf)
+            counts.append(1)
+            members.append([idx])
+    return members
 
 
 def _build_templates(glyphs: list[np.ndarray], values: list[int | None],
@@ -510,27 +547,11 @@ def _build_templates(glyphs: list[np.ndarray], values: list[int | None],
 
 
 def _largest_cluster_mean(glyphs: list[np.ndarray], same_thresh: float) -> np.ndarray:
-    """Greedily group glyphs by mutual similarity (same running-average
-    approach as classification itself) and return the mean of whichever
-    cluster ends up largest."""
-    means: list[np.ndarray] = []
-    counts: list[int] = []
-    for g in glyphs:
-        gf = g.astype(np.float32)
-        best_i, best_sim = -1, -1.0
-        for i, m in enumerate(means):
-            sim = _similarity(gf, m)
-            if sim > best_sim:
-                best_sim, best_i = sim, i
-        if best_i >= 0 and best_sim >= same_thresh:
-            n = counts[best_i]
-            means[best_i] = (means[best_i] * n + gf) / (n + 1)
-            counts[best_i] += 1
-        else:
-            means.append(gf)
-            counts.append(1)
-    biggest = max(range(len(counts)), key=lambda i: counts[i])
-    return means[biggest].astype(np.uint8)
+    """Greedily group glyphs by mutual similarity and return the mean of
+    whichever cluster ends up largest."""
+    members = _cluster_by_similarity(glyphs, same_thresh)
+    biggest = max(members, key=len)
+    return np.mean([glyphs[i] for i in biggest], axis=0).astype(np.uint8)
 
 
 _CLASSIFY_TIE_MARGIN = 0.05   # candidates within this much of the top ZNCC score
@@ -746,20 +767,35 @@ def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> l
 
     # Precise, timing-only tick count since each run began - this doesn't
     # depend on classifying digit shape at all, so it's not vulnerable to the
-    # same misreads as the vote below.
+    # same misreads as the vote below. But used raw, it still lets noise
+    # compound over a long segment: a same/different misjudgment anywhere
+    # along the way permanently shifts every later frame's tick count by a
+    # constant, randomly walking the eventual vote away from the truth a
+    # little further the longer the segment runs (confirmed on a real video:
+    # a whole segment's majority vote settled 10 seconds off despite every
+    # individual digit classification being fine). Every wrap-anchor already
+    # re-derives "0" from scratch every ~10 ticks (see
+    # _bootstrap_ones_digits) specifically so errors can't compound past one
+    # wrap - re-deriving *ticks* the same way corrects for that same noise
+    # while still combining every frame in the segment into one vote, rather
+    # than splitting into many small, weakly-supported per-wrap votes.
     rel_ticks, _ = _relative_ticks(ones_glyphs, seg_id, ones_thresh)
+    _, tens_changed = _relative_ticks(tens_glyphs, seg_id, tens_thresh)
+    corrected_ticks = _corrected_ticks(rel_ticks, seg_id, wrap_anchors, tens_changed)
 
-    # Each frame independently guesses what the clock read at *its run's
-    # first frame* (its own classified value, walked back by its own elapsed
-    # ticks). A correctly-classified frame always lands on the same guess as
-    # every other correctly-classified frame in that run; a misclassified
-    # frame almost never lands on that same value by coincidence. So the
-    # run's actual anchor value is just whichever guess wins the most votes -
-    # a single bad frame no longer corrupts everything downstream of it
-    # (the old failure mode: classify once per transition, trust it until
-    # the next one).
-    raw_guesses: dict[int, list[int]] = {}   # segment -> [guessed anchor values]
+    # Each frame independently guesses what the clock read at its segment's
+    # first anchor (its own classified value, walked back by its own
+    # corrected elapsed ticks). A correctly-classified frame always lands on
+    # the same guess as every other correctly-classified frame in that
+    # segment; a misclassified frame almost never lands on that same value
+    # by coincidence. So the segment's actual value is just whichever guess
+    # wins the most votes - a single bad frame no longer corrupts everything
+    # downstream of it (the old failure mode: classify once per transition,
+    # trust it until the next one).
+    raw_guesses: dict[int, list[int]] = {}   # segment -> [guesses]
     for k, i in enumerate(valid_idx):
+        if corrected_ticks[k] is None:
+            continue
         n_minutes_here = len(per_frame_minute_chars[i])
         m_digits = [_classify(minute_slot_glyphs[s][k], ones_templates) for s in range(n_minutes_here)]
         tens_d = _classify(tens_glyphs[k], ones_templates, valid_digits=range(6))
@@ -773,8 +809,8 @@ def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> l
         # as "1:00" - exactly what a real 2-digit-minutes video hit).
         minutes = sum(d * 10 ** s for s, d in enumerate(m_digits))
         value_now = minutes * 60 + tens_d * 10 + ones_d
-        anchor_guess = value_now + rel_ticks[k]
-        raw_guesses.setdefault(seg_id[k], []).append(anchor_guess)
+        guess = round(value_now + corrected_ticks[k])
+        raw_guesses.setdefault(seg_id[k], []).append(guess)
 
     # A handful of frames land 1-2 seconds off the rest even when everything
     # is basically working (small residual tick-counting noise, distinct
@@ -787,12 +823,87 @@ def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> l
 
     readings: list[ClockReading] = [ClockReading(t, None) for t in times]
     for k, i in enumerate(valid_idx):
+        if corrected_ticks[k] is None:
+            continue
         anchor = seg_anchor.get(seg_id[k])
         if anchor is None:
             continue
-        readings[i] = ClockReading(times[i], float(anchor - rel_ticks[k]))
+        readings[i] = ClockReading(times[i], float(round(anchor - corrected_ticks[k])))
 
     return _reject_outliers(readings)
+
+
+def _corrected_ticks(rel_ticks: list[int], seg_id: list[int],
+                      wrap_anchors: dict[int, list[tuple[int, int]]],
+                      tens_changed: list[bool]) -> list[float | None]:
+    """Re-express each frame's elapsed ticks relative to its segment's first
+    anchor, but with every anchor-to-anchor gap replaced by however many
+    real wraps actually separate them - what it must actually be - rather
+    than trusting the raw (possibly noisy) tick count between them. A frame
+    with no anchor in its segment at all can't be corrected this way and
+    gets None.
+
+    The number of real wraps between two anchors is counted directly from
+    tens_changed events in that span, not inferred by rounding the raw tick
+    gap to the nearest multiple of 10: a dropped-frames hiccup in the
+    source video can make the ones digit skip several values in a single
+    sampled step (confirmed on a real video: on-screen "09:41" one sampled
+    frame, "09:36" the next), which under-counts the raw tick gap enough
+    that rounding it picks the wrong multiple entirely - a true 20-tick gap
+    measured as 14 raw ticks rounds to 10, not 20. The tens digit's own
+    change events aren't fooled by this the same way: a real wrap flips it
+    exactly once no matter how many ones-ticks got collapsed into that
+    step, so counting those events directly gets the true wrap count right
+    even when the ones-tick gap alone can't say which multiple it should be.
+
+    Between two anchors, the correction is applied by *scaling* the raw
+    tick count to fit the corrected gap, not by snapping to whichever
+    anchor is nearest and adding a lump correction there: the latter is
+    exact at both anchors too, but creates an artificial jump right at
+    the midpoint between them when the raw gap wasn't already a clean
+    multiple of 10 - confirmed on a real video, as a handful of readings
+    2-3 seconds off *only* in a narrow band around each such midpoint,
+    despite the anchors on both sides being individually correct. Scaling
+    distributes that same correction smoothly across the whole span
+    instead, since a real countdown ticks at a constant rate through it.
+    """
+    corrected_pos_by_seg: dict[int, dict[int, int]] = {}
+    for seg, anchors in wrap_anchors.items():
+        ordered = sorted(anchors)
+        pos = {ordered[0][0]: 0}
+        for (prev_tick, prev_idx), (cur_tick, cur_idx) in zip(ordered, ordered[1:]):
+            n_wraps = max(1, sum(1 for c in tens_changed[prev_idx + 1:cur_idx + 1] if c))
+            pos[cur_tick] = pos[prev_tick] + 10 * n_wraps
+        corrected_pos_by_seg[seg] = pos
+
+    offsets: list[float | None] = [None] * len(rel_ticks)
+    for k in range(len(rel_ticks)):
+        anchors = wrap_anchors.get(seg_id[k])
+        if not anchors:
+            # No wrap ever confirmed itself in this segment - too short, or
+            # never ticked - so there's nothing to correct raw ticks
+            # against. Falling back to the raw (uncorrected) count still
+            # lets a short segment be read via templates already trusted
+            # from elsewhere in the clock; drift only becomes a problem
+            # over the many-tick runs a correction is actually available
+            # for.
+            offsets[k] = float(rel_ticks[k])
+            continue
+        ordered = sorted(t for t, _ in anchors)
+        pos = corrected_pos_by_seg[seg_id[k]]
+        t = rel_ticks[k]
+        if t <= ordered[0] or t >= ordered[-1]:
+            a = ordered[0] if t <= ordered[0] else ordered[-1]
+            offsets[k] = pos[a] + (t - a)
+            continue
+        a = max(x for x in ordered if x <= t)
+        b = min(x for x in ordered if x >= t)
+        if a == b:
+            offsets[k] = pos[a]
+        else:
+            frac = (t - a) / (b - a)
+            offsets[k] = pos[a] + frac * (pos[b] - pos[a])
+    return offsets
 
 
 def _reject_outliers(readings: list[ClockReading], tol: float = 3.0) -> list[ClockReading]:

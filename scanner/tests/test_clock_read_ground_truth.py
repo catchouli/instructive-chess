@@ -48,6 +48,15 @@ CACHE = Path(__file__).resolve().parents[1] / "cache"
 # KfuyDm5uksI went from 20/120 to 101/120 correct frames from that change
 # alone, including a second, previously-unverified game later in the same
 # window that spot-check (1093, 119.0) below now confirms reads correctly.
+# A second fix (rejecting wrap-anchor candidates whose "before" glyph
+# doesn't match the shape most other anchors in the same segment settle on,
+# and counting real wraps between anchors from tens-digit change events
+# instead of rounding the raw ones-tick gap) fixed 9h8UcYJZz-Q's
+# 45-59-second window, previously silently wrong by up to 20 seconds after
+# a dropped-frames hiccup in the source stream skipped the on-screen clock
+# ahead by 5 seconds in a single sampled frame - spot-checks (61, 590.0)
+# through (89, 560.0) below span that fix.
+#
 # Don't raise these floors without re-verifying spot checks still pass by
 # hand against the actual video; a real improvement should let you *add*
 # more spot checks; a bigger fraction on its own proves nothing.
@@ -58,7 +67,17 @@ CASES = {
         (1014, 169.0),  # "2:49"
         (1093, 119.0),  # "1:59" - a second, later game in the same window
     ]),
-    "9h8UcYJZz-Q": (45, 0.90, [
+    "9h8UcYJZz-Q": (45, 0.95, [
+        (50, 600.0),    # "10:00" - frozen, game hasn't started ticking yet
+        (61, 590.0),    # "09:50"
+        (79, 570.0),    # "09:30" - right after a dropped-frames hiccup in the
+                         # source stream skips the on-screen clock ahead by 5
+                         # seconds in a single sampled frame (t=70 -> t=71,
+                         # "09:41" -> "09:36"); confirms the skip no longer
+                         # throws off anchors past it (see _wrap_anchors and
+                         # _corrected_ticks)
+        (80, 569.0),    # "09:29"
+        (89, 560.0),    # "09:20"
         (162, 494.0),   # "08:14"
         (163, 493.0),   # "08:13"
     ]),

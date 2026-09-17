@@ -24,6 +24,7 @@ from clock_read import (  # noqa: E402
     _calibrate_same_sim,
     _classify,
     _cluster_votes,
+    _corrected_ticks,
     _gap_threshold,
     _hole_count,
     _is_colon,
@@ -33,6 +34,7 @@ from clock_read import (  # noqa: E402
     _segments,
     _tight_ink_bbox,
     _vote_for_anchors,
+    _wrap_anchors,
 )
 
 _SIM = 0.5   # a threshold synthetic bar-glyphs never land near either side of
@@ -160,6 +162,54 @@ def test_bootstrap_breaks_across_an_unreliable_gap():
     values = _bootstrap_ones_digits(ones_glyphs, tens_glyphs, seg_id, _SIM, _SIM)
     assert values[0] is None and values[1] is None
     assert values[2:] == ones_seq[2:]
+
+
+def test_wrap_anchors_rejects_a_skip_induced_false_wrap():
+    # 3 genuine wraps (ones and tens change together, "before" glyph always
+    # a real "0") plus one fake: a dropped-frames-style skip that also
+    # flips both digits in one step, but whose "before" glyph is "5", not
+    # "0" - a real video hit this exact case ("09:41" -> "09:36" in one
+    # sampled frame). With enough genuine wraps to form a majority, the
+    # fake one's mismatched shape should get it rejected.
+    ones_seq = (
+        [3, 2, 1, 0, 9] +                          # wrap A: idx3(0) -> idx4(9)
+        [8, 7, 6, 5, 4, 3, 2, 1, 0, 9] +           # wrap B: idx13(0) -> idx14(9)
+        [8, 7, 6, 5, 0] +                          # fake jump: idx18(5) -> idx19(0)
+        [9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 9]          # wrap C: idx29(0) -> idx30(9)
+    )
+    tens_seq = (
+        [5] * 4 + [4] * 10 + [3] * 5 + [2] * 11 + [1]
+    )
+    assert len(ones_seq) == len(tens_seq) == 31
+    ones_glyphs = [_digit_img(d) for d in ones_seq]
+    tens_glyphs = [_digit_img(d) for d in tens_seq]
+    seg_id = [0] * len(ones_seq)
+
+    anchors = _wrap_anchors(ones_glyphs, tens_glyphs, seg_id, _SIM, _SIM)
+    idxs = [idx for _, idx in anchors[0]]
+    assert 18 not in idxs             # the fake, mismatched-shape anchor is rejected
+    assert set(idxs) == {3, 13, 29}   # only the genuine "0"-shaped wraps remain
+
+
+def test_corrected_ticks_counts_real_wraps_from_tens_changes():
+    # raw ones-ticks alone say the gap between these two anchors is 14 -
+    # close enough to round to 10 (one wrap) - but a dropped-frames skip
+    # undercounted it: 2 real wraps actually happened, confirmed here by 2
+    # tens-digit change events in between. Counting those directly (rather
+    # than rounding the raw gap) must recover the true 20-tick gap.
+    seg_id = [0] * 21
+    wrap_anchors = {0: [(0, 0), (14, 20)]}
+    tens_changed = [False] * 21
+    tens_changed[5] = True
+    tens_changed[15] = True
+    rel_ticks = [0] * 21
+    rel_ticks[10] = 7    # halfway through the raw tick gap
+    rel_ticks[20] = 14
+
+    offsets = _corrected_ticks(rel_ticks, seg_id, wrap_anchors, tens_changed)
+    assert offsets[0] == 0
+    assert offsets[20] == 20   # 2 real wraps, not round(14 / 10) * 10 == 10
+    assert offsets[10] == 10   # halfway through raw ticks -> halfway through corrected span
 
 
 def test_build_templates_rejects_a_minority_mislabel():
