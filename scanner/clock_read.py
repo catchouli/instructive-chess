@@ -149,7 +149,7 @@ def find_clock_regions(frames: list[np.ndarray], board_box) -> list[ClockBox]:
             if res is None:
                 continue
             mask, bbox = res
-            chars = _strip_decimal_tenths(mask, _segment_chars(mask, bbox))
+            chars = _strip_leading_icon(_strip_decimal_tenths(mask, _segment_chars(mask, bbox)))
             # A character count alone is too weak a signature once the
             # size/aspect gate above is loose enough to admit a single
             # digit: plenty of non-clock UI text (a scoreboard, a move
@@ -269,6 +269,38 @@ def _strip_decimal_tenths(mask: np.ndarray, chars: list[tuple[int, int, int, int
     format to parse."""
     if len(chars) >= 2 and _is_decimal_point(mask, chars[-2]):
         return chars[:-2]
+    return chars
+
+
+_ICON_GAP_RATIO = 4.0   # how much wider than the next-widest gap a leading
+                        # icon's own gap must be before it's stripped
+
+
+def _strip_leading_icon(chars: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
+    """Drop a leading character separated from the rest by a gap much wider
+    than the normal spacing between real clock characters.
+
+    Some clocks show a small ticking-clock icon well to the left of the
+    actual "M:SS" text while that side is active (confirmed on a real
+    video, chess.com) - it isn't part of the clock reading, and its own
+    rendered width varies a lot frame to frame (sometimes the whole icon,
+    sometimes just a sliver of it survives the crop), so it can't be told
+    apart from a real leading minutes digit by width or shape alone. The
+    *gap* before it is the reliable signal: a consistent ~38-60px margin
+    before the real text on that same video, dwarfing the 2-3px gaps
+    between the real characters themselves - a relative comparison (this
+    gap vs. the largest other gap) rather than a fixed pixel cutoff, the
+    same style of check _gap_threshold already uses elsewhere in this
+    module, so it isn't tied to one clock's exact font size."""
+    if len(chars) < 3:
+        return chars
+    gaps = [chars[i + 1][0] - chars[i][1] for i in range(len(chars) - 1)]
+    # an absolute floor alongside the ratio guards against the degenerate
+    # case where every other gap happens to be ~0 (adjacent/touching
+    # glyphs), which would otherwise make almost any gap look relatively
+    # "huge" by comparison
+    if gaps[0] >= max(10, _ICON_GAP_RATIO * max(gaps[1:])):
+        return chars[1:]
     return chars
 
 
@@ -752,7 +784,7 @@ def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> l
             per_frame_mask.append(None)
             continue
         mask, bbox = res
-        chars = _strip_decimal_tenths(mask, _segment_chars(mask, bbox))
+        chars = _strip_leading_icon(_strip_decimal_tenths(mask, _segment_chars(mask, bbox)))
         if len(chars) not in (4, 5):   # only M:SS / MM:SS supported for now
             per_frame_chars.append(None)
             per_frame_mask.append(None)

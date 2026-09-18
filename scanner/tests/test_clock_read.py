@@ -35,6 +35,7 @@ from clock_read import (  # noqa: E402
     _segment_chars,
     _segments,
     _strip_decimal_tenths,
+    _strip_leading_icon,
     _tight_ink_bbox,
     _vote_for_anchors,
     _wrap_anchors,
@@ -175,6 +176,41 @@ def test_strip_decimal_tenths_drops_a_trailing_period_and_digit():
 
     # a plain "M:SS" with no trailing tenths is left alone
     assert _strip_decimal_tenths(mask, chars[:4]) == chars[:4]
+
+
+def test_strip_leading_icon_drops_a_far_off_leading_blob():
+    # a ticking-clock icon sitting well to the left of the real "M:SS" text
+    # (confirmed on a real video, chess.com): a ~38-60px gap before the real
+    # text vs. 2-3px between the real characters themselves
+    chars = [
+        (0, 14, 0, 29),    # icon (its own width varies a lot in practice -
+                           # this check works off the gap, not the width)
+        (53, 61, 0, 29),   # minutes digit
+        (64, 66, 0, 29),   # colon
+        (69, 78, 0, 29),   # tens-of-seconds
+        (81, 90, 0, 29),   # ones-of-seconds
+    ]
+    assert _strip_leading_icon(chars) == chars[1:]
+
+
+def test_strip_leading_icon_keeps_a_real_leading_minutes_digit():
+    # ordinary "M:SS" spacing - every gap is roughly the same size, so
+    # nothing should be dropped even if the leading digit happens to be
+    # narrow (e.g. a "1")
+    chars = [
+        (0, 3, 0, 29),     # a narrow "1" as the minutes digit
+        (6, 8, 0, 29),     # colon
+        (11, 20, 0, 29),   # tens-of-seconds
+        (23, 32, 0, 29),   # ones-of-seconds
+    ]
+    assert _strip_leading_icon(chars) == chars
+
+
+def test_strip_leading_icon_leaves_short_lists_alone():
+    # fewer than 3 characters means there's no second gap to compare
+    # against - nothing to safely judge "anomalously large" relative to
+    chars = [(0, 14, 0, 29), (53, 61, 0, 29)]
+    assert _strip_leading_icon(chars) == chars
 
 
 def test_bootstrap_anchors_ones_digit_from_tens_wrap():
