@@ -331,11 +331,67 @@ def _distinct_states(readings: list[tuple[float, str | None]]):
     return out
 
 
-def reconstruct(readings: list[tuple[float, str | None]]) -> list[Game]:
+def _clock_at_or_before(pairs: list[tuple[float, float]], t: float) -> float | None:
+    """The clock value from the last entry in `pairs` (sorted by timestamp)
+    at or before `t`, or None if `pairs` has no entry that early."""
+    best = None
+    for pt, seconds in pairs:
+        if pt <= t:
+            best = seconds
+        else:
+            break
+    return best
+
+
+def _clock_contradicts_bridge(clock_by_side: dict[str, list[tuple[float, float]]] | None,
+                               board: chess.Board, moves: list[chess.Move],
+                               t0: float, t1: float, min_gap: float = 2.0) -> bool:
+    """True if the clock proves at least one side credited with a move in
+    this bridge never actually spent any time on it.
+
+    A real move always costs the mover some of their own remaining time (or
+    at worst leaves it unchanged via an increment bonus, never literally the
+    same reading with no tick at all across several real seconds) - a
+    reading that can only be explained by crediting a side with a move its
+    own clock flatly contradicts is a strong sign the reading itself isn't
+    real play. Confirmed on a real video: a cancelled/changed premove
+    (dragged to one square, then actually played to a different one before
+    the opponent moved) put a piece on the board for several sampled frames
+    that never became a real move - board content alone can't tell that
+    apart from a genuine move, but the mover's clock not moving at all
+    across multiple real seconds can.
+
+    `min_gap` guards against the ordinary case of a fast move landing on the
+    very next 1-second sample, where the clock's whole-second display just
+    hasn't visibly ticked yet - only treat a *sustained* lack of ticking
+    (several real seconds with literally no clock evidence of thought) as
+    contradicting the move.
+    """
+    if not clock_by_side or t1 - t0 < min_gap:
+        return False
+    sides_moved: set[str] = set()
+    b = board.copy(stack=False)
+    for mv in moves:
+        sides_moved.add("white" if b.turn == chess.WHITE else "black")
+        b.push(mv)
+    for side in sides_moved:
+        pairs = clock_by_side.get(side)
+        if not pairs:
+            continue
+        before = _clock_at_or_before(pairs, t0)
+        after = _clock_at_or_before(pairs, t1)
+        if before is not None and after is not None and after >= before:
+            return True
+    return False
+
+
+def reconstruct(readings: list[tuple[float, str | None]],
+                 clock_by_side: dict[str, list[tuple[float, float]]] | None = None) -> list[Game]:
     events = _distinct_states(readings)
     games: list[Game] = []
     current: Game | None = None
     board: chess.Board | None = None
+    last_ts = 0.0
 
     def close():
         nonlocal current, board
@@ -355,6 +411,7 @@ def reconstruct(readings: list[tuple[float, str | None]]) -> list[Game]:
             current = Game(start_seconds=ts, flipped=(orient == "flipped"))
             board = chess.Board()
             misses = 0
+            last_ts = ts
             continue
 
         if current is None or board is None:
@@ -374,6 +431,7 @@ def reconstruct(readings: list[tuple[float, str | None]]) -> list[Game]:
                             board.push(mv)
                         current.clean += 1
                         misses = 0
+                        last_ts = ts
                         break
             continue
 
@@ -395,6 +453,8 @@ def reconstruct(readings: list[tuple[float, str | None]]) -> list[Game]:
             moves, info = _find_sequence(board, target, MAX_DEPTH)
         else:
             moves, info = None, "unreachable"
+        if moves is not None and _clock_contradicts_bridge(clock_by_side, board, moves, last_ts, ts):
+            moves, info = None, "clock-contradicted"
         if moves is None:
             # a noisy / mid-animation reading - step over it and try to resync
             misses += 1
@@ -404,6 +464,7 @@ def reconstruct(readings: list[tuple[float, str | None]]) -> list[Game]:
             continue
 
         misses = 0
+        last_ts = ts
         for mv in moves:
             current.moves_san.append(board.san(mv))
             current.move_seconds.append(ts)

@@ -213,6 +213,55 @@ def test_a_single_misread_frame_does_not_trigger_a_spurious_bridge():
         assert san != "Rxg5"
 
 
+def test_clock_evidence_rejects_a_cancelled_premove():
+    # Real bug, found on a real video: a cancelled/changed premove put a
+    # different (but fully legal) move on the board for several sampled
+    # frames before the player's *actual* move appeared there instead -
+    # board content alone can't tell a genuine move from an abandoned
+    # premove preview, but the mover's clock not moving at all across
+    # several real seconds can. Modeled here as a bridge where white's c3
+    # is real either way but black's response differs: the first, fake
+    # placement (Qf6) is credited to black without their clock ever
+    # ticking; the second, real one (Nf6) comes with an actual clock drop.
+    opening = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]
+    board = chess.Board()
+    for san in opening:
+        board.push_san(san)
+
+    fake_board = board.copy()
+    fake_board.push_san("c3")
+    fake_board.push_san("Qf6")
+    fake_placement = _placement_of(fake_board)
+
+    real_board = board.copy()
+    real_board.push_san("c3")
+    real_board.push_san("Nf6")
+    real_placement = _placement_of(real_board)
+
+    readings = stream_for(opening, hold=1)
+    last_ts = readings[-1][0]
+    readings += [
+        (last_ts + 3.0, fake_placement),
+        (last_ts + 4.0, fake_placement),
+        (last_ts + 5.0, fake_placement),
+        (last_ts + 8.0, real_placement),
+        (last_ts + 9.0, real_placement),
+    ]
+    clock_by_side = {
+        "black": [
+            (last_ts, 300.0),
+            (last_ts + 5.0, 300.0),   # frozen through the whole fake window
+            (last_ts + 8.0, 295.0),   # ticked by the time the real move appears
+        ],
+    }
+
+    without_clock = run(readings)
+    with_clock = run(readings, clock_by_side=clock_by_side)
+
+    assert without_clock[0].moves_san[-2:] == ["c3", "Qf6"]  # the artifact wins with no clock evidence
+    assert with_clock[0].moves_san[-2:] == ["c3", "Nf6"]     # clock evidence recovers the real move
+
+
 def test_multi_ply_gap_is_bridged():
     # drop 4 consecutive plies (5-8, Bb5 through dxc6) with a further move (O-O)
     # confirming the position afterwards: a wider gap than a single skipped
