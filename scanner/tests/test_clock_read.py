@@ -29,10 +29,12 @@ from clock_read import (  # noqa: E402
     _gap_threshold,
     _hole_count,
     _is_colon,
+    _is_decimal_point,
     _reject_outliers,
     _relative_ticks,
     _segment_chars,
     _segments,
+    _strip_decimal_tenths,
     _tight_ink_bbox,
     _vote_for_anchors,
     _wrap_anchors,
@@ -123,6 +125,56 @@ def test_is_colon_distinguishes_sparse_dots_from_a_digit():
     digit[1:15, 0:6] = 1
     digit[5:11, 2:4] = 0   # hollow center - still leaves ink in every row
     assert _is_colon(digit, (0, 5, 0, 15)) is False
+
+
+def test_is_decimal_point_distinguishes_a_low_dot_from_a_colon_or_digit():
+    # a decimal point: a single small dot near the bottom of the row, far
+    # short of spanning the full digit height - confirmed on a real video,
+    # chess.com switches to "M:SS.T" once a clock drops under ~4 seconds
+    row_h = 16
+    point = np.zeros((row_h, 6), np.uint8)
+    point[12:15, 2:4] = 1   # small, near the bottom
+    assert _is_decimal_point(point, (0, 5, 0, row_h - 1)) is True
+
+    # a colon spans most of the row height (two dots near top and bottom)
+    colon = np.zeros((row_h, 6), np.uint8)
+    colon[3:5, 2:4] = 1
+    colon[11:13, 2:4] = 1
+    assert _is_decimal_point(colon, (0, 5, 0, row_h - 1)) is False
+
+    # a full digit obviously isn't a decimal point either
+    digit = np.zeros((row_h, 6), np.uint8)
+    digit[1:15, 0:6] = 1
+    assert _is_decimal_point(digit, (0, 5, 0, row_h - 1)) is False
+
+
+def test_strip_decimal_tenths_drops_a_trailing_period_and_digit():
+    # "M:SS.T" (a clock in tenths-of-a-second mode) should be treated as
+    # plain "M:SS" - the tenths digit and its point are noise this module
+    # never needed at whole-second precision anyway
+    row_h = 16
+    mask = np.zeros((row_h, 40), np.uint8)
+    chars = [
+        (0, 4, 0, row_h - 1),    # minutes digit
+        (6, 7, 0, row_h - 1),    # colon (content doesn't matter for this test)
+        (9, 13, 0, row_h - 1),   # tens-of-seconds digit
+        (15, 19, 0, row_h - 1),  # ones-of-seconds digit
+        (21, 23, 0, row_h - 1),  # decimal point (small, near bottom)
+        (25, 29, 0, row_h - 1),  # tenths digit
+    ]
+    mask[1:15, 0:4] = 1
+    mask[3:5, 6:7] = 1
+    mask[11:13, 6:7] = 1
+    mask[1:15, 9:13] = 1
+    mask[1:15, 15:19] = 1
+    mask[12:15, 21:23] = 1   # low, short blob - the decimal point
+    mask[1:15, 25:29] = 1
+
+    stripped = _strip_decimal_tenths(mask, chars)
+    assert stripped == chars[:4]
+
+    # a plain "M:SS" with no trailing tenths is left alone
+    assert _strip_decimal_tenths(mask, chars[:4]) == chars[:4]
 
 
 def test_bootstrap_anchors_ones_digit_from_tens_wrap():
