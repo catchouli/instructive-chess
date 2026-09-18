@@ -149,7 +149,7 @@ def find_clock_regions(frames: list[np.ndarray], board_box) -> list[ClockBox]:
             if res is None:
                 continue
             mask, bbox = res
-            chars = _segment_chars(mask, bbox)
+            chars = _strip_decimal_tenths(mask, _segment_chars(mask, bbox))
             # A character count alone is too weak a signature once the
             # size/aspect gate above is loose enough to admit a single
             # digit: plenty of non-clock UI text (a scoreboard, a move
@@ -238,6 +238,38 @@ def _is_colon(mask: np.ndarray, char: tuple[int, int, int, int]) -> bool:
         return False
     first, last = nz[0], nz[-1]
     return not bool(ink_rows[first:last + 1].all())
+
+
+def _is_decimal_point(mask: np.ndarray, char: tuple[int, int, int, int]) -> bool:
+    """A decimal point is a small dot sitting near the bottom of the row,
+    nowhere close to spanning the full digit height - unlike a colon (two
+    dots that together span most of a digit's height, just with a gap in
+    the middle) or any digit (one continuous stroke top to bottom). Some
+    clocks switch to a "M:SS.T" tenths-of-a-second display once time gets
+    low (confirmed on a real video, chess.com, under ~4 seconds remaining);
+    this is purely a shape check, so it doesn't care what comes before or
+    after it - the caller decides what a trailing period means."""
+    x0, x1, y0, y1 = char
+    row_h = y1 - y0 + 1
+    region = mask[y0:y1 + 1, x0:x1 + 1]
+    ink_rows = np.nonzero(region.sum(axis=1) > 0)[0]
+    if len(ink_rows) == 0:
+        return False
+    ink_h = ink_rows[-1] - ink_rows[0] + 1
+    near_bottom = ink_rows[-1] >= 0.7 * row_h
+    return bool(ink_h <= 0.4 * row_h and near_bottom)
+
+
+def _strip_decimal_tenths(mask: np.ndarray, chars: list[tuple[int, int, int, int]]
+                           ) -> list[tuple[int, int, int, int]]:
+    """Drop a trailing "period, tenths digit" pair so the rest of this
+    module can keep treating every clock as plain "M:SS"/"MM:SS"/"H:MM:SS" -
+    whole-second precision is all this module ever reports anyway (see
+    ClockReading), so a fractional tail is pure noise to strip, not a
+    format to parse."""
+    if len(chars) >= 2 and _is_decimal_point(mask, chars[-2]):
+        return chars[:-2]
+    return chars
 
 
 def _segment_chars(mask: np.ndarray, bbox, min_gap: int = 0, min_width: int = 2):
@@ -720,7 +752,7 @@ def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> l
             per_frame_mask.append(None)
             continue
         mask, bbox = res
-        chars = _segment_chars(mask, bbox)
+        chars = _strip_decimal_tenths(mask, _segment_chars(mask, bbox))
         if len(chars) not in (4, 5):   # only M:SS / MM:SS supported for now
             per_frame_chars.append(None)
             per_frame_mask.append(None)
