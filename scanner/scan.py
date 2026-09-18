@@ -98,17 +98,27 @@ def fmt_clock(seconds: float | None) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
-def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> None:
+def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game],
+                     voted_readings: list[tuple[float, str | None]]) -> None:
     """Best-effort: read each game's own on-screen clock(s) over just that
     game's video window - bounded memory regardless of how long the source
-    video is, unlike decoding the whole thing into clock_read at once - and
-    attach remaining-time-per-move to the game object.
+    video is, unlike decoding the whole thing into clock_read at once.
+
+    Also *revalidates* the game's already-reconstructed moves against the
+    clock evidence: a cancelled or changed premove puts a fully legal piece
+    placement on the board for several sampled frames without the mover's
+    clock ever ticking - board content alone can't tell that apart from a
+    real move (confirmed on a real video: this silently corrupted a game
+    from that point on), but re-running reconstruct.reconstruct() on this
+    same window with the clock data available lets it reject exactly that.
+    Only replaces the game's moves if reconstruction actually finds a
+    matching game in the revalidated result; otherwise leaves it untouched.
 
     Leaves clock_*_seconds at their empty default (see reconstruct.Game) for
-    any game this can't do confidently for: a missing clock reading next to
-    a real move is far less harmful than a wrong one, and clock_read.py is
-    already deliberately conservative about reporting a value at all (see
-    its module docstring).
+    any game this can't read a clock confidently for: a missing clock
+    reading next to a real move is far less harmful than a wrong one, and
+    clock_read.py is already deliberately conservative about reporting a
+    value at all (see its module docstring).
     """
     for g in games:
         if not g.move_seconds:
@@ -121,12 +131,32 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> Non
             times.append(ts)
         if len(frames) < CLOCK_MIN_FRAMES:
             continue
+
+        clock_readings: dict[str, list[clock_read.ClockReading]] = {}
         for cbox in clock_read.find_clock_regions(frames, board_box):
             readings = clock_read.read_clock(frames, times, cbox)
             frac = sum(1 for r in readings if r.seconds is not None) / len(readings)
             if frac < CLOCK_MIN_COVERAGE:
                 continue
             side = clock_read.side_for_box(cbox, board_box, g.flipped)
+            clock_readings[side] = readings
+        if not clock_readings:
+            continue
+
+        clock_by_side = {
+            side: sorted((r.t, r.seconds) for r in readings if r.seconds is not None)
+            for side, readings in clock_readings.items()
+        }
+        window = [(t, p) for t, p in voted_readings if start <= t <= end]
+        revalidated = reconstruct.reconstruct(window, clock_by_side=clock_by_side)
+        match = next((rg for rg in revalidated
+                      if abs(rg.start_seconds - g.start_seconds) < 2 and rg.flipped == g.flipped), None)
+        if match is not None:
+            g.moves_san = match.moves_san
+            g.move_seconds = match.move_seconds
+            g.clean, g.bridged, g.skipped = match.clean, match.bridged, match.skipped
+
+        for side, readings in clock_readings.items():
             values = clock_read.clock_at_times(readings, g.move_seconds)
             if side == "white":
                 g.clock_white_seconds = values
@@ -205,7 +235,12 @@ def main(argv: list[str]) -> int:
         print("[5/5] reading clocks - skipped (--no-clocks)")
     else:
         print("[5/5] reading clocks")
-        annotate_clocks(src.path, box, kept)
+        annotate_clocks(src.path, box, kept, readings)
+        # revalidating against clock evidence can change a game's clean/
+        # bridged mix (and therefore its confidence) enough to cross the
+        # keep/drop threshold either way - re-apply the same filter rather
+        # than keeping a game whose confidence no longer clears the bar.
+        kept = [g for g in kept if g.confidence >= args.min_confidence and g.ply >= 2]
         n_clocked = sum(1 for g in kept if g.clock_white_seconds or g.clock_black_seconds)
         print(f"      clock data for {n_clocked}/{len(kept)} games")
 
