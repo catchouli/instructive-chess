@@ -98,18 +98,19 @@ def test_best_rating_in_chars_ignores_a_far_decoy_cluster():
     # Confirmed on a real video: the on-screen clock sat inside the same
     # fixed-width search band as the true rating, well to the right of it,
     # and its digits won the old "rightmost match wins" tie-break outright.
-    # Build a real "(15)" near the origin and a real, differently-valued
-    # "(28)" far to the right (standing in for the unrelated clock digits)
-    # and confirm only the near one is ever found.
+    # Build a real "(150)" near the origin and a real, differently-valued
+    # "(283)" far to the right (standing in for the unrelated clock digits)
+    # and confirm only the near one is ever found. (3 digits: 1-2 digit
+    # reads are rejected outright - no real rating is under 100.)
     img = np.zeros((30, 400), np.uint8)
     _paste_paren(img, 0, 0, 4, 24, opening=True)
-    _draw_digits(img, "15", 6, 0)
-    _paste_paren(img, 40, 0, 4, 24, opening=False)
+    _draw_digits(img, "150", 6, 0)
+    _paste_paren(img, 58, 0, 4, 24, opening=False)
 
     far_x = 300
     _paste_paren(img, far_x, 0, 4, 24, opening=True)
-    _draw_digits(img, "28", far_x + 6, 0)
-    _paste_paren(img, far_x + 40, 0, 4, 24, opening=False)
+    _draw_digits(img, "283", far_x + 6, 0)
+    _paste_paren(img, far_x + 58, 0, 4, 24, opening=False)
 
     # Use _band_glyphs's own connected-component detection, same as every
     # real caller does, rather than hand-tracked boxes - putText's "1" and
@@ -120,7 +121,7 @@ def test_best_rating_in_chars_ignores_a_far_decoy_cluster():
     result = rr._best_rating_in_chars(mask, chars, img, min_confidence=0.0)
     assert result is not None
     rating, _ = result
-    assert rating == 15   # not 28 - the far decoy must never be considered
+    assert rating == 150   # not 283 - the far decoy must never be considered
 
 
 def test_best_rating_in_chars_drops_extreme_aspect_ratio_glyphs():
@@ -169,3 +170,14 @@ def test_is_narrow_bracket_uses_median_relative_width():
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_row_rating_reads_a_real_lichess_player_row():
+    # Real crop (9h8UcYJZz-Q, 1080p): the band under the top clock holds a
+    # separator bar, the "retro_sort ... 2115" row, and the move-list
+    # toolbar below it. Reading the whole band made Tesseract miss 2115;
+    # only the line nearest the clock may be read.
+    fixture = Path(__file__).resolve().parent / "fixtures" / "lichess_rating_row_9h8UcYJZz-Q.png"
+    row = cv2.imread(str(fixture), cv2.IMREAD_GRAYSCALE)
+    rating, _ = rr._row_rating(row, 0, 0, row.shape[1], row.shape[0], from_top=True)
+    assert rating == 2115

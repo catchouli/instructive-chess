@@ -301,7 +301,9 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
                 if black is None and cand_black is not None and cand_black_conf > black_conf:
                     black, black_conf = cand_black, cand_black_conf
 
-        g.rating_white, g.rating_black = white, black
+        # Same floor for every reading path (see rating_read._ocr_digits).
+        g.rating_white = white if white is not None and white >= 100 else None
+        g.rating_black = black if black is not None and black >= 100 else None
 
 
 def main(argv: list[str]) -> int:
