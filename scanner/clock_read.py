@@ -92,8 +92,17 @@ def find_clock_regions(frames: list[np.ndarray], board_box) -> list[ClockBox]:
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 25), np.uint8))
     num, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
 
-    ref = grays[len(grays) // 2]
-    h_img, w_img = ref.shape
+    # Validate against several frames spread across the window, not just
+    # one: lichess dims whichever clock isn't running, and a dimmed clock's
+    # faint colon fails _is_colon (confirmed on a real video - the
+    # opponent's clock was idle in the single middle frame used to validate,
+    # so that side's clock was never found for the whole game). Trying
+    # frames in order of distance from the middle keeps the old behavior
+    # whenever the middle frame already validates.
+    n = len(grays)
+    picks = sorted({round(k * (n - 1) / 8) for k in range(9)}, key=lambda i: abs(i - (n - 1) / 2))
+    refs = [grays[i] for i in picks]
+    h_img, w_img = refs[0].shape
     pad = 6
     cands = []
     for i in range(1, num):
@@ -143,7 +152,11 @@ def find_clock_regions(frames: list[np.ndarray], board_box) -> list[ClockBox]:
         # the frequency mask excludes it) on the common case where the
         # narrow pad already had the whole label.
         found = None
-        for left_pad in (pad, *(max(pad, m * w) for m in (2, 3, 4, 6, 8))):
+        # Narrow pads across every frame before any wider pad (see above).
+        attempts = [(ref, left_pad)
+                    for left_pad in (pad, *(max(pad, m * w) for m in (2, 3, 4, 6, 8)))
+                    for ref in refs]
+        for ref, left_pad in attempts:
             px0, py0 = max(0, x - left_pad), max(0, y - pad)
             px1, py1 = min(w_img, x + w + pad), min(h_img, y + h + pad)
             crop = ref[py0:py1, px0:px1]
