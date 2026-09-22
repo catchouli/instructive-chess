@@ -661,6 +661,12 @@ def read_ratings_beside_clocks(frame_bgr: np.ndarray, board_box, upper_clock, lo
 
     def band(clock, below: bool, other):
         cx, cy, cw, ch = clock
+        # Only for a clock panel *beside* the board. Where clocks sit above/
+        # below it (chess.com: on the same row as "name (rating)"), the row
+        # under the top clock is the board itself - confirmed on real
+        # videos, junk read there ("2990", "199") beat the correct reading.
+        if cx < bx + bw and bx < cx + cw:
+            return None
         x0 = cx
         if cx + cw / 2 > bx + bw:          # clock panel right of the board:
             x0 = max(x0, bx + bw + 4)      # keep board squares out of the row
