@@ -181,3 +181,12 @@ def test_row_rating_reads_a_real_lichess_player_row():
     row = cv2.imread(str(fixture), cv2.IMREAD_GRAYSCALE)
     rating, _ = rr._row_rating(row, 0, 0, row.shape[1], row.shape[0], from_top=True)
     assert rating == 2115
+
+
+def test_ratings_beside_clocks_ignores_clocks_above_and_below_the_board():
+    # chess.com-style: clocks share the board's columns (above/below it) -
+    # the rows next to them are the board or the name row, not a rating row.
+    frame = np.full((720, 1280, 3), 40, np.uint8)
+    board = (682, 60, 567, 567)
+    reading = rr.read_ratings_beside_clocks(frame, board, (1152, 13, 93, 33), (1148, 675, 96, 32))
+    assert reading.top is None and reading.bottom is None
