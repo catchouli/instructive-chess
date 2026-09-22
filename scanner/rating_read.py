@@ -95,8 +95,10 @@ def _ocr_digits(crop: np.ndarray, x0: int, y0: int, x1: int, y1: int
             continue
         confs = [c for t, c in zip(data["text"], data["conf"]) if t.strip()]
         digits = "".join(ch for t in texts for ch in t if ch.isdigit())
-        if not (2 <= len(digits) <= 4):
-            continue   # ratings are realistically 2-4 digits (e.g. 40-9999)
+        if not (3 <= len(digits) <= 4):
+            continue   # chess.com's rating floor is 100 (lichess's is higher): a
+                       # 1-2 digit read is a misread, not a rating - measured on
+                       # the catalog, every such value was wrong (22, 19, 14, 6...)
         # a 4-digit rating's leading digit can only be 1, 2 or 3 - nobody
         # active is rated 4000+. Only applies to a *4-digit* run: a
         # 3-digit (sub-1000) rating is common early in a speedrun and has
@@ -593,13 +595,38 @@ def read_ratings(frame_bgr: np.ndarray, board_box, allow_region_fallback: bool =
 _ROW_RATING_RE = re.compile(r"^(\d{3,4})\??$")   # lichess marks a provisional rating "1500?"
 
 
-def _row_rating(gray: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> tuple[int, float] | None:
-    """The rightmost standalone 3-4 digit number in one row of text."""
+def _nearest_text_line(crop: np.ndarray, from_top: bool, thresh: int = 40) -> np.ndarray:
+    """The single line of text in `crop` nearest its top (or bottom) edge.
+    The band beside a clock can also catch the next UI row (confirmed on a
+    real lichess video: move-list toolbar icons under the name row made
+    Tesseract miss the rating entirely)."""
+    ink = np.abs(crop.astype(np.int16) - float(np.median(crop))) > thresh
+    frac = ink.mean(axis=1)
+    rows = np.nonzero((frac > 0.005) & (frac < 0.6))[0]   # a rule/separator line isn't text
+    if len(rows) == 0:
+        return crop
+    lines, start = [], rows[0]
+    for a, b in zip(rows, rows[1:]):
+        if b - a > 2:
+            lines.append((start, a))
+            start = b
+    lines.append((start, rows[-1]))
+    tallest = max(b - a for a, b in lines)
+    lines = [(a, b) for a, b in lines if b - a >= 0.4 * tallest]   # not a stray pixel row
+    top, bot = lines[0] if from_top else lines[-1]
+    pad = max(3, (bot - top) // 3)
+    return crop[max(0, top - pad):bot + pad + 1]
+
+
+def _row_rating(gray: np.ndarray, x0: int, y0: int, x1: int, y1: int,
+                from_top: bool = True) -> tuple[int, float] | None:
+    """The rightmost standalone 3-4 digit number in the line of text nearest
+    the given edge of this band."""
     h, w = gray.shape
     x0, x1, y0, y1 = max(0, x0), min(w, x1), max(0, y0), min(h, y1)
     if x1 - x0 < 10 or y1 - y0 < 5:
         return None
-    crop = gray[y0:y1, x0:x1]
+    crop = _nearest_text_line(gray[y0:y1, x0:x1], from_top)
     big = cv2.resize(crop, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
     data = pytesseract.image_to_data(big, config="--psm 7", output_type=pytesseract.Output.DICT)
     best = None
@@ -641,7 +668,7 @@ def read_ratings_beside_clocks(frame_bgr: np.ndarray, board_box, upper_clock, lo
         ox, oy, ow, oh = other
         if y0 < oy + oh and oy < y1 and x0 < ox + ow and ox < w_img:
             return None
-        return _row_rating(gray, x0, y0, w_img, y1)
+        return _row_rating(gray, x0, y0, w_img, y1, from_top=below)
 
     top = band(upper_clock, True, lower_clock)
     bottom = band(lower_clock, False, upper_clock)
