@@ -31,6 +31,8 @@ import reconstruct           # noqa: E402
 
 CLOCK_MIN_COVERAGE = 0.5   # a candidate clock region must read at least this
                            # fraction of its window's frames to be trusted
+CLOCK_MAX_CANDIDATES = 4  # candidate regions screened per game; the best-reading two are kept
+CLOCK_SCREEN_FRAMES = 40  # frames each candidate is screened on before a full read
 CLOCK_MIN_FRAMES = 20      # a window shorter than this can't bootstrap a
                            # wrap-anchor (see clock_read.py) reliably enough
                            # to be worth attempting at all
@@ -126,14 +128,19 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> Non
         if len(frames) < CLOCK_MIN_FRAMES:
             continue
 
-        clock_readings: dict[str, list[clock_read.ClockReading]] = {}
-        for cbox in clock_read.find_clock_regions(frames, board_box):
-            readings = clock_read.read_clock_ocr(frames, times, cbox)
-            frac = sum(1 for r in readings if r.seconds is not None) / len(readings)
-            if frac < CLOCK_MIN_COVERAGE:
-                continue
-            side = clock_read.side_for_box(cbox, board_box, g.flipped)
-            clock_readings[side] = readings
+        # Screen every candidate on a sample of frames, then read only the
+        # chosen clocks in full - OCR per frame is the slow part.
+        step = max(1, len(frames) // CLOCK_SCREEN_FRAMES)
+        sample_f, sample_t = frames[::step], times[::step]
+        screened = [(cbox, clock_read.read_clock_ocr(sample_f, sample_t, cbox, reject_outliers=False))
+                    for cbox in clock_read.find_clock_regions(frames, board_box, max_regions=CLOCK_MAX_CANDIDATES)]
+        chosen = clock_read.assign_clock_sides(screened, board_box, g.flipped, CLOCK_MIN_COVERAGE)
+        box_for = {id(rd): cbox for cbox, rd in screened}
+        clock_readings = {}
+        for side, rd in chosen.items():
+            full = clock_read.read_clock_ocr(frames, times, box_for[id(rd)])
+            if sum(r.seconds is not None for r in full) >= CLOCK_MIN_COVERAGE * len(full):
+                clock_readings[side] = full
         if not clock_readings:
             continue
 

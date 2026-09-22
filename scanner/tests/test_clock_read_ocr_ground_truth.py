@@ -69,7 +69,7 @@ def test_clock_ocr_matches_ground_truth(video_id):
     board_box = board_detect.detect(frames[:30] if len(frames) >= 30 else frames)
     assert board_box is not None, "board must be detectable to exclude it from clock search"
 
-    candidates = clock_read.find_clock_regions(frames, board_box)
+    candidates = clock_read.find_clock_regions(frames, board_box, max_regions=scan.CLOCK_MAX_CANDIDATES)
     assert candidates, f"no clock region found for {video_id}"
 
     # Try every candidate, keep whichever one matches the most spot checks -
