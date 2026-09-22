@@ -46,17 +46,36 @@ def _rating_line(res: dict) -> str:
     return "rtg " + " ".join(f"{side[0]}:{v['got']}/{v['truth']}" for side, v in res["rating"].items())
 
 
-def _rescore_one(g: dict, no_ratings: bool) -> tuple[dict | None, str]:
+def _calibrated_box(video_id: str, first_start: float) -> tuple[int, int, int, int] | None:
+    """The board box exactly as scan.py ends up using it: detected over the
+    whole video, then tuned on the first opening position (the rating band
+    is placed relative to this box, and a few pixels matter - a fresh
+    per-game detect() gave different, wrong rating reads on real games)."""
+    path = _video(video_id)
+    if path is None:
+        return None
+    box = scan.board_detect.detect(scan.sample_frames(path, 0.0, 0.0, 15))
+    if box is None:
+        return None
+    for _, frame in scan.iter_frames(path, 1.0, 0.0, first_start + 60.0):
+        if scan.recognize.looks_like_start(scan.recognize.occupancy(frame, box)):
+            model, tuned = scan.recognize.calibrate_from_start(frame, box)
+            if model is not None:
+                return tuned.x, tuned.y, tuned.w, tuned.h
+    return box.x, box.y, box.w, box.h
+
+
+def _rescore_one(g: dict, box_xywh: tuple[int, int, int, int] | None,
+                 no_ratings: bool) -> tuple[dict | None, str]:
     """Rerun the clock (and rating) stage for one catalogued game; returns
     the updated entry, or None and why it was skipped. Runs in a worker
     process."""
     path = _video(g["video_id"])
     if path is None:
         return None, "video not cached"
-    start, end = max(0.0, g["start_seconds"] - 1), g["move_seconds"][-1] + 3
-    box = scan.board_detect.detect(scan.sample_frames(path, start, end, 15))
-    if box is None:
+    if box_xywh is None:
         return None, "board not found"
+    box = scan.board_detect.Box(*box_xywh, score=1.0)
     game = SimpleNamespace(moves_san=list(g["moves_san"]), move_seconds=list(g["move_seconds"]),
                            start_seconds=g["start_seconds"], flipped=g["flipped"],
                            clock_white_seconds=[], clock_black_seconds=[],
@@ -112,7 +131,13 @@ def main(argv: list[str] | None = None) -> int:
     os.environ.setdefault("OMP_THREAD_LIMIT", "1")
     totals = {"moves": [0, 0], "clocks": [0, 0], "ratings": [0, 0]}
     with ProcessPoolExecutor(max_workers=args.jobs) as pool:
-        futures = {pool.submit(_rescore_one, by_id[gid], args.no_ratings): gid
+        first_start: dict[str, float] = {}
+        for gid in ids:
+            vid = by_id[gid]["video_id"]
+            first_start[vid] = min(first_start.get(vid, 1e9), by_id[gid]["start_seconds"])
+        box_futs = {vid: pool.submit(_calibrated_box, vid, t) for vid, t in first_start.items()}
+        boxes = {vid: f.result() for vid, f in box_futs.items()}
+        futures = {pool.submit(_rescore_one, by_id[gid], boxes[by_id[gid]["video_id"]], args.no_ratings): gid
                    for gid in ids if reals[gid] is not None}
         for gid in ids:
             if reals[gid] is None:
