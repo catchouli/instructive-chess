@@ -29,6 +29,7 @@ def _entry(source: Source, game: Game, index: int) -> dict:
         "pgn": game.pgn(),
         "ply": game.ply,
         "confidence": round(game.confidence, 3),
+        "flipped": game.flipped,
         "scanned_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     # Only present when clock reading found a usable clock for this game -
@@ -38,6 +39,12 @@ def _entry(source: Source, game: Game, index: int) -> dict:
         entry["clock_white_seconds"] = _clock_seconds(game.clock_white_seconds)
     if game.clock_black_seconds:
         entry["clock_black_seconds"] = _clock_seconds(game.clock_black_seconds)
+    # Same "only present when found" convention as the clock fields above -
+    # lets the web app tell "not attempted" from "attempted, not confident".
+    if game.rating_white is not None:
+        entry["rating_white"] = game.rating_white
+    if game.rating_black is not None:
+        entry["rating_black"] = game.rating_black
     return entry
 
 
@@ -68,5 +75,15 @@ def merge(source: Source, games: list[Game], path: Path = DATA_FILE) -> tuple[in
     combined.sort(key=lambda e: _sort_key(e), reverse=True)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(combined, indent=2, ensure_ascii=False) + "\n")
+    # Write to a temp file and rename over the target rather than writing
+    # in place - the web app polls this exact file live, and an in-place
+    # write is visible mid-truncation to a concurrent reader (confirmed:
+    # the static server's response briefly 200s with an empty/partial body
+    # during a write), which app.js's fetch sees as a JSON parse failure
+    # and reports as "no games in the catalog" even though nothing is
+    # actually wrong. os.replace is atomic on the same filesystem, so a
+    # reader always sees either the old file or the new one, never neither.
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(combined, indent=2, ensure_ascii=False) + "\n")
+    tmp.replace(path)
     return len(fresh), len(combined)

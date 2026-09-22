@@ -42,6 +42,7 @@ makes no network requests.
 python3 -m venv scanner/.venv
 scanner/.venv/bin/pip install -r scanner/requirements.txt
 brew install ffmpeg          # video decoding / muxing
+brew install tesseract       # OCR engine used to read on-screen clocks and ratings
 ```
 
 ### Catalog a video

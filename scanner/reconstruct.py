@@ -61,6 +61,14 @@ class Game:
     # game.
     clock_white_seconds: list[float | None] = field(default_factory=list)
     clock_black_seconds: list[float | None] = field(default_factory=list)
+    # Player ratings, e.g. the "(2653)" next to a name - populated by scan.py
+    # from a single high-resolution frame (see rating_read.py; the regular
+    # scan resolution is too low to read rating digits from). A rating never
+    # changes mid-game, so unlike the clock fields this is one value per
+    # side, not one per move. None when rating reading wasn't attempted or
+    # didn't find a confident reading for that side.
+    rating_white: int | None = None
+    rating_black: int | None = None
     clean: int = 0             # transitions resolved by a unique single legal move
     bridged: int = 0          # transitions resolved by a unique multi-move sequence
     skipped: int = 0          # readings stepped over as noise

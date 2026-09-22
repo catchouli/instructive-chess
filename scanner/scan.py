@@ -25,6 +25,7 @@ import board_detect          # noqa: E402
 import catalog               # noqa: E402
 import clock_read            # noqa: E402
 import download              # noqa: E402
+import rating_read           # noqa: E402
 import recognize             # noqa: E402
 import reconstruct           # noqa: E402
 
@@ -49,6 +50,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                    help="drop games below this reconstruction confidence (default 0.6)")
     p.add_argument("--dry-run", action="store_true", help="print games, do not write games.json")
     p.add_argument("--no-clocks", action="store_true", help="skip reading on-screen clocks")
+    p.add_argument("--no-ratings", action="store_true", help="skip reading player ratings")
     return p.parse_args(argv)
 
 
@@ -134,7 +136,7 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game],
 
         clock_readings: dict[str, list[clock_read.ClockReading]] = {}
         for cbox in clock_read.find_clock_regions(frames, board_box):
-            readings = clock_read.read_clock(frames, times, cbox)
+            readings = clock_read.read_clock_ocr(frames, times, cbox)
             frac = sum(1 for r in readings if r.seconds is not None) / len(readings)
             if frac < CLOCK_MIN_COVERAGE:
                 continue
@@ -164,14 +166,128 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game],
                 g.clock_black_seconds = values
 
 
+def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -> None:
+    """Best-effort: read each game's two player ratings from a single high-
+    resolution frame a few seconds into the game (see download.fetch_hires_frame
+    and rating_read.py). Unlike clocks, a rating is static for the whole
+    game, so one frame is all this ever needs - no per-move sampling.
+
+    Skipped entirely for a local-file source (no higher-resolution version
+    to fetch than what's already on disk) or when the regular scan's board
+    box came from a differently-sized frame than the hi-res one - the box
+    is rescaled by the two frames' height ratio, which only makes sense
+    when both are views of the same video.
+    """
+    if not download._looks_like_url(src.url):
+        return
+    cap = cv2.VideoCapture(str(src.path))
+    lowres_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    cap.release()
+    if not lowres_h:
+        return
+
+    for g in games:
+        if not g.move_seconds:
+            continue
+        # Try a few candidate timestamps, stopping as soon as both sides
+        # are read - most games resolve on the first (cheapest) one, so
+        # this doesn't meaningfully slow down the common case. Confirmed
+        # on a real video: right after a new game starts, the broadcast's
+        # opponent-info panel can still show a placeholder ("Opponent",
+        # blank avatar, no rating) for several seconds before matchmaking
+        # populates the real name/rating - a fixed single early timestamp
+        # (start+8s) caught this transient placeholder state outright on a
+        # short game, even though the real info was on screen just 12s
+        # later, well within the same game's own window.
+        duration = max(0.0, g.move_seconds[-1] - g.start_seconds)
+        candidates = [
+            min(g.start_seconds + 8.0, g.move_seconds[-1]),
+            min(g.start_seconds + max(20.0, duration * 0.5), g.move_seconds[-1]),
+            g.move_seconds[-1],
+        ]
+        seen: list[float] = []
+        for t in candidates:
+            if not any(abs(t - s) < 1.0 for s in seen):
+                seen.append(t)
+
+        # Track the best (highest-confidence) reading per side across
+        # attempts, not just the first non-None one - confirmed on a real
+        # video, an earlier frame's read for the very same, unchanging
+        # rating can classify a digit slightly worse than a later frame's
+        # (ordinary per-frame compression/rendering noise), so "first
+        # success" can lock in a worse answer than one already sitting in
+        # a later candidate. Stop early once both sides clear a "good
+        # enough" bar rather than always spending every candidate's
+        # network fetch - most games resolve well on the first, cheapest
+        # timestamp.
+        #
+        # Two phases, not one: phase 1 tries every candidate timestamp
+        # with ONLY the direct above/below-board search - a phase-1 miss
+        # on one frame (e.g. a transient "loading" placeholder before
+        # matchmaking populates a name) is exactly what the later
+        # candidates are for. Only if a side is *still* missing after every
+        # timestamp's direct search does phase 2 allow the wider sidebar-
+        # style fallback search, and only on frames already fetched in
+        # phase 1 (no extra network cost) - confirmed on a real video, that
+        # fallback's much wider search area can confidently misread a
+        # channel's own static "N wins - N losses" title card as a rating,
+        # and if it's allowed to fire on the very first (transient-failure)
+        # frame, that high-confidence wrong answer blocks phase 1 from ever
+        # reaching a later frame that would have read correctly.
+        _GOOD_ENOUGH = 0.6
+        white = black = None
+        white_conf = black_conf = -1.0
+        frames_and_boxes: list[tuple] = []
+        for ts in seen:
+            frame = download.fetch_hires_frame(src.url, ts)
+            if frame is None:
+                continue
+            scale = frame.shape[0] / lowres_h
+            scaled_box = (round(box.x * scale), round(box.y * scale),
+                          round(box.w * scale), round(box.h * scale))
+            frames_and_boxes.append((frame, scaled_box))
+            reading = rating_read.read_ratings(frame, scaled_box, allow_region_fallback=False)
+            # same top/bottom -> white/black convention as
+            # clock_read.side_for_box: a broadcast always shows each
+            # player's own info on their own side.
+            if g.flipped:
+                cand_white, cand_white_conf = reading.top, reading.top_confidence
+                cand_black, cand_black_conf = reading.bottom, reading.bottom_confidence
+            else:
+                cand_white, cand_white_conf = reading.bottom, reading.bottom_confidence
+                cand_black, cand_black_conf = reading.top, reading.top_confidence
+            if cand_white is not None and cand_white_conf > white_conf:
+                white, white_conf = cand_white, cand_white_conf
+            if cand_black is not None and cand_black_conf > black_conf:
+                black, black_conf = cand_black, cand_black_conf
+            if white_conf >= _GOOD_ENOUGH and black_conf >= _GOOD_ENOUGH:
+                break
+
+        if white is None or black is None:
+            for frame, scaled_box in frames_and_boxes:
+                reading = rating_read.read_ratings(frame, scaled_box, allow_region_fallback=True)
+                if g.flipped:
+                    cand_white, cand_white_conf = reading.top, reading.top_confidence
+                    cand_black, cand_black_conf = reading.bottom, reading.bottom_confidence
+                else:
+                    cand_white, cand_white_conf = reading.bottom, reading.bottom_confidence
+                    cand_black, cand_black_conf = reading.top, reading.top_confidence
+                if white is None and cand_white is not None and cand_white_conf > white_conf:
+                    white, white_conf = cand_white, cand_white_conf
+                if black is None and cand_black is not None and cand_black_conf > black_conf:
+                    black, black_conf = cand_black, cand_black_conf
+
+        g.rating_white, g.rating_black = white, black
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
-    print(f"[1/5] resolving {args.target}")
+    print(f"[1/6] resolving {args.target}")
     src = download.fetch(args.target, max_height=args.max_height)
     print(f"      {src.title!r} - {src.channel or 'unknown channel'}  ({src.path.name})")
 
-    print("[2/5] locating board")
+    print("[2/6] locating board")
     if args.crop:
         x, y, w, h = (int(v) for v in args.crop.split(","))
         box = board_detect.Box(x, y, w, h, score=1.0)
@@ -193,7 +309,7 @@ def main(argv: list[str]) -> int:
         print(f"      wrote {out}")
         return 0
 
-    print(f"[3/5] scanning frames @ {args.fps} fps")
+    print(f"[3/6] scanning frames @ {args.fps} fps")
     model: recognize.BoardModel | None = None
     readings: list[tuple[float, str | None]] = []
     n_board = 0
@@ -224,7 +340,7 @@ def main(argv: list[str]) -> int:
         return 3
     print(f"      {len(readings)} frames, {n_board} with a readable board")
 
-    print("[4/5] reconstructing games")
+    print("[4/6] reconstructing games")
     readings = recognize.vote_stream(readings)
     games = reconstruct.reconstruct(readings)
     kept = [g for g in games if g.confidence >= args.min_confidence and g.ply >= 2]
@@ -232,9 +348,9 @@ def main(argv: list[str]) -> int:
           f"(confidence >= {args.min_confidence})")
 
     if args.no_clocks:
-        print("[5/5] reading clocks - skipped (--no-clocks)")
+        print("[5/6] reading clocks - skipped (--no-clocks)")
     else:
-        print("[5/5] reading clocks")
+        print("[5/6] reading clocks")
         annotate_clocks(src.path, box, kept, readings)
         # revalidating against clock evidence can change a game's clean/
         # bridged mix (and therefore its confidence) enough to cross the
@@ -244,6 +360,14 @@ def main(argv: list[str]) -> int:
         n_clocked = sum(1 for g in kept if g.clock_white_seconds or g.clock_black_seconds)
         print(f"      clock data for {n_clocked}/{len(kept)} games")
 
+    if args.no_ratings:
+        print("[6/6] reading player ratings - skipped (--no-ratings)")
+    else:
+        print("[6/6] reading player ratings")
+        annotate_ratings(src, box, kept)
+        n_rated = sum(1 for g in kept if g.rating_white is not None or g.rating_black is not None)
+        print(f"      rating data for {n_rated}/{len(kept)} games")
+
     for i, g in enumerate(kept):
         flip = " [flipped]" if g.flipped else ""
         clocks = ""
@@ -251,8 +375,11 @@ def main(argv: list[str]) -> int:
             w = fmt_clock(g.clock_white_seconds[-1]) if g.clock_white_seconds else "?"
             b = fmt_clock(g.clock_black_seconds[-1]) if g.clock_black_seconds else "?"
             clocks = f"  clocks(end) W={w} B={b}"
+        ratings = ""
+        if g.rating_white is not None or g.rating_black is not None:
+            ratings = f"  ratings W={g.rating_white} B={g.rating_black}"
         print(f"\n  game {i + 1}: {g.ply} plies  conf={g.confidence:.2f}  "
-              f"t={int(g.start_seconds)}s{flip}{clocks}")
+              f"t={int(g.start_seconds)}s{flip}{clocks}{ratings}")
         print(f"    {g.pgn()[:240]}")
 
     if args.dry_run:
