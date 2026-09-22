@@ -18,6 +18,10 @@
            placeholder="e.g.  1. e4 c5 2. Nc3   &mdash;  or just  e4 c5 Nc3">
     <button id="clear" type="button" title="Clear">&times;</button>
   </div>
+  <div class="rating-filter">
+    <label for="min-rating">Min rating</label>
+    <input id="min-rating" type="number" inputmode="numeric" min="0" step="50" placeholder="any">
+  </div>
   <p id="status" class="status"></p>
   <ol id="results" class="results"></ol>
 </main>

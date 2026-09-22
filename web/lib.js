@@ -23,6 +23,26 @@ export function parseQuery(text) {
   return { sans: chess.history(), ok: true, bad: null };
 }
 
+/** A game's rating for filtering/display purposes: the higher of the two
+ *  sides' ratings (a speedrun is usually classified by its host's climbing
+ *  rating, not the often much-lower opponent's), or null when neither side
+ *  has one - reading player ratings from video is best-effort and often
+ *  unavailable (see scanner/rating_read.py). */
+export function gameRating(game) {
+  const vals = [game.rating_white, game.rating_black].filter((v) => v != null);
+  return vals.length ? Math.max(...vals) : null;
+}
+
+/** Does this game meet a minimum-rating filter? A game with no known
+ *  rating can't be confirmed to meet an active filter, so it's excluded
+ *  rather than shown as a false "match" - `minRating` of null/NaN means
+ *  no filter is active and every game passes. */
+export function matchesMinRating(game, minRating) {
+  if (minRating == null || Number.isNaN(minRating)) return true;
+  const r = gameRating(game);
+  return r != null && r >= minRating;
+}
+
 /** Strict prefix: does `game.moves_san` begin with exactly `qsans`? */
 export function matchesPrefix(game, qsans) {
   if (qsans.length === 0) return true;
