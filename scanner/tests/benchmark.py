@@ -9,8 +9,9 @@ instead of spot-checked.
 Where the real games come from:
   1. Game links in the video's own description (cached .info.json) - lichess
      and chess.com. Exact, and the only source for lichess-only videos.
-  2. The monthly chess.com archives of the channel's known accounts (see
-     ACCOUNTS), for games played in the months before the video went up.
+  2. The monthly archives of the channel's known accounts (chess.com: see
+     ACCOUNTS; lichess: see LICHESS_ACCOUNTS, needs an API token), for games
+     played in the months before the video went up.
 
 A catalogued game is matched to the real game sharing the longest opening
 prefix with it, and only if that match is long enough and unambiguous - a
@@ -31,10 +32,12 @@ import difflib
 import functools
 import io
 import json
+import os
 import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -51,6 +54,13 @@ ACCOUNTS = {
     "Eric Rosen": ["imrosen", "ohnomyrosen"],
     "Daniel Naroditsky": ["SenseiDanya", "OhMyLands", "danielnaroditsky"],
 }
+# lichess accounts, searched via the per-user export. That endpoint needs a
+# personal API token (no scopes) - anonymous requests are either refused or
+# held to one at a time per IP. Read from $LICHESS_TOKEN or scanner/.lichess_token.
+LICHESS_ACCOUNTS = {
+    "Eric Rosen": ["EricRosen"],
+}
+LICHESS_TOKEN_FILE = ROOT / "scanner" / ".lichess_token"
 # How far before a video's publish date its games may have been played.
 LOOKBACK_DAYS = 120
 
@@ -74,15 +84,27 @@ UA = "instructive-chess scanner benchmark (personal project)"
 
 # --- fetching ---------------------------------------------------------------
 
-def _get(url: str) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    for attempt in range(3):
+_last_request: dict[str, float] = {}
+MIN_GAP_S = 2.0   # between requests to the same host - be polite with the APIs (and the user's token)
+
+
+def _get(url: str, headers: dict | None = None) -> bytes:
+    """One request at a time, spaced out per host. On 429, waits a full
+    minute before a single retry (lichess's documented rule), then gives up."""
+    host = urllib.parse.urlsplit(url).netloc
+    req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
+    for attempt in range(2):
+        wait = _last_request.get(host, 0) + MIN_GAP_S - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_request[host] = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 return resp.read()
         except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < 2:
-                time.sleep(5 * (attempt + 1))
+            if e.code == 429 and attempt == 0:
+                print(f"  (rate limited by {host}; waiting 60s)", file=sys.stderr)
+                time.sleep(60)
                 continue
             raise
     raise RuntimeError("unreachable")
@@ -120,6 +142,55 @@ def chesscom_month(user: str, year: int, month: int) -> list[dict]:
             continue
         rec["source"] = g.get("url", f"chess.com:{user}")
         rec["end_time"] = g.get("end_time")
+        out.append(rec)
+    return out
+
+
+def _lichess_token() -> str | None:
+    token = os.environ.get("LICHESS_TOKEN")
+    if not token and LICHESS_TOKEN_FILE.exists():
+        token = LICHESS_TOKEN_FILE.read_text().strip()
+    return token or None
+
+
+@functools.lru_cache(maxsize=None)
+def lichess_month(user: str, year: int, month: int) -> list[dict]:
+    """One calendar month of *user*'s standard blitz/rapid/classical lichess
+    games, with clocks. Needs a token; without one returns nothing."""
+    path = TRUTH_CACHE / f"lichess_{user.lower()}_{year:04d}-{month:02d}.pgn"
+    if path.exists():
+        text = path.read_text()
+    else:
+        token = _lichess_token()
+        if token is None:
+            return []
+        since = datetime(year, month, 1, tzinfo=timezone.utc)
+        until = datetime(year + (month == 12), month % 12 + 1, 1, tzinfo=timezone.utc)
+        url = (f"https://lichess.org/api/games/user/{user}?clocks=true&evals=false&opening=false"
+               f"&perfType=blitz,rapid,classical&since={int(since.timestamp() * 1000)}"
+               f"&until={int(until.timestamp() * 1000)}")
+        text = _get(url, {"Authorization": f"Bearer {token}",
+                          "Accept": "application/x-chess-pgn"}).decode()
+        today = date.today()
+        if (year, month) < (today.year, today.month):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+    out = []
+    stream = io.StringIO(text)
+    while True:
+        game = chess.pgn.read_game(stream)
+        if game is None:
+            break
+        rec = parse_game(game)
+        if rec is None:
+            continue
+        rec["source"] = game.headers.get("Site", f"lichess:{user}")
+        try:
+            played = datetime.strptime(f"{game.headers['UTCDate']} {game.headers['UTCTime']}",
+                                       "%Y.%m.%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            rec["end_time"] = int(played.timestamp())
+        except (KeyError, ValueError):
+            rec["end_time"] = None
         out.append(rec)
     return out
 
@@ -176,7 +247,10 @@ def linked_games(video_id: str) -> list[dict]:
 # --- parsing ----------------------------------------------------------------
 
 def parse_pgn(text: str) -> dict | None:
-    game = chess.pgn.read_game(io.StringIO(text))
+    return parse_game(chess.pgn.read_game(io.StringIO(text)))
+
+
+def parse_game(game: chess.pgn.Game | None) -> dict | None:
     if game is None or game.headers.get("Variant", "Standard") not in ("Standard", "Chess"):
         return None
     if game.headers.get("SetUp") == "1" and game.headers.get("FEN", chess.STARTING_FEN) != chess.STARTING_FEN:
@@ -227,9 +301,11 @@ def candidates_for_video(channel: str, published: str | None, video_id: str) -> 
         months.add((d.year, d.month))
         d += timedelta(days=28)
     months.add((pub.year, pub.month))
-    for user in ACCOUNTS.get(channel, []):
+    sources = ([(chesscom_month, u) for u in ACCOUNTS.get(channel, [])]
+               + [(lichess_month, u) for u in LICHESS_ACCOUNTS.get(channel, [])])
+    for fetch, user in sources:
         for y, m in sorted(months):
-            for rec in chesscom_month(user, y, m):
+            for rec in fetch(user, y, m):
                 end = rec.get("end_time")
                 if end is None:
                     continue

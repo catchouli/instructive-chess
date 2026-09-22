@@ -4,3 +4,4 @@ scanner/cache/
 *.pyc
 .DS_Store
 .pytest_cache/
+scanner/.lichess_token
