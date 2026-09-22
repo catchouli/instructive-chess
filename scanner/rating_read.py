@@ -31,6 +31,7 @@ something occasionally wrong.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import cv2
@@ -587,3 +588,63 @@ def read_ratings(frame_bgr: np.ndarray, board_box, allow_region_fallback: bool =
             bottom, bottom_conf = matches[-1][0], matches[-1][1]
     return RatingReading(top=top, bottom=bottom,
                           top_confidence=top_conf, bottom_confidence=bottom_conf)
+
+
+_ROW_RATING_RE = re.compile(r"^(\d{3,4})\??$")   # lichess marks a provisional rating "1500?"
+
+
+def _row_rating(gray: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> tuple[int, float] | None:
+    """The rightmost standalone 3-4 digit number in one row of text."""
+    h, w = gray.shape
+    x0, x1, y0, y1 = max(0, x0), min(w, x1), max(0, y0), min(h, y1)
+    if x1 - x0 < 10 or y1 - y0 < 5:
+        return None
+    crop = gray[y0:y1, x0:x1]
+    big = cv2.resize(crop, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    data = pytesseract.image_to_data(big, config="--psm 7", output_type=pytesseract.Output.DICT)
+    best = None
+    for left, text, conf in zip(data["left"], data["text"], data["conf"]):
+        m = _ROW_RATING_RE.match(text.strip())
+        if not m:
+            continue
+        digits = m.group(1)
+        if len(digits) == 4 and digits[0] not in ("1", "2", "3"):
+            continue
+        if best is None or left > best[0]:
+            best = (left, int(digits), max(float(conf), 0.0) / 100.0)
+    return (best[1], best[2]) if best else None
+
+
+def read_ratings_beside_clocks(frame_bgr: np.ndarray, board_box, upper_clock, lower_clock) -> RatingReading:
+    """Read each player's rating from the row of text beside their clock:
+    just below the top player's clock and just above the bottom player's -
+    lichess's layout ("name ....... 2407" between the clock and the move
+    list), where the "(rating)" search above/below the board finds nothing
+    or, worse, the game-info panel listing *both* players (confirmed on
+    real videos: ratings swapped or garbage on 6 of 7 lichess games).
+
+    Clock boxes are (x, y, w, h) in this frame's pixels. A row that would
+    overlap the other clock is skipped - with both clocks stacked in one
+    panel (seen on chess.com-style overlays) that row is the other clock,
+    and "3:42" read without its colon must not become a rating of 342.
+    """
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    w_img = gray.shape[1]
+    bx, by, bw, bh = board_box.as_tuple() if hasattr(board_box, "as_tuple") else board_box
+
+    def band(clock, below: bool, other):
+        cx, cy, cw, ch = clock
+        x0 = cx
+        if cx + cw / 2 > bx + bw:          # clock panel right of the board:
+            x0 = max(x0, bx + bw + 4)      # keep board squares out of the row
+        y0, y1 = (cy + ch, cy + 2 * ch) if below else (cy - ch, cy)
+        ox, oy, ow, oh = other
+        if y0 < oy + oh and oy < y1 and x0 < ox + ow and ox < w_img:
+            return None
+        return _row_rating(gray, x0, y0, w_img, y1)
+
+    top = band(upper_clock, True, lower_clock)
+    bottom = band(lower_clock, False, upper_clock)
+    return RatingReading(top=top[0] if top else None, bottom=bottom[0] if bottom else None,
+                         top_confidence=top[1] if top else None,
+                         bottom_confidence=bottom[1] if bottom else None)

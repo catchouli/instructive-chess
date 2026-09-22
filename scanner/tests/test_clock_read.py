@@ -21,6 +21,7 @@ from clock_read import (  # noqa: E402
     ClockBox,
     ClockReading,
     assign_clock_sides,
+    live_move_count,
     _parse_clock_text,
     _bootstrap_ones_digits,
     _build_templates,
@@ -602,3 +603,32 @@ def test_parse_clock_text_no_bare_digit_guess_after_trimming_junk():
     # a confident but wrong 2:00.
     assert _parse_clock_text("F200}") is None
     assert _parse_clock_text("0930") == 570   # a clean colon-less read still works
+
+
+def _ticking(side_times: list[tuple[float, float]]) -> list[ClockReading]:
+    return [ClockReading(t=t, seconds=v) for t, v in side_times]
+
+
+def test_live_move_count_drops_moves_after_both_clocks_stop():
+    # Real shape: after the last real move (t=204) black thinks and resigns;
+    # then 4 "moves" appear with both clocks frozen.
+    moves = [100, 110, 120, 130, 140, 150, 170, 190, 204, 208, 208, 215, 215]
+    white = _ticking([(t, 300 - min(t, 150) + 100) for t in range(100, 230)])
+    black = _ticking([(t, 400 - min(t, 206) + 100) for t in range(100, 230)])
+    assert live_move_count(moves, {"white": white, "black": black}) == 9
+
+
+def test_live_move_count_keeps_a_mating_final_move_and_needs_both_clocks():
+    moves = [100, 150, 204, 208]
+    frozen = _ticking([(t, 300.0 if t > 150 else 300.0 - (t - 100)) for t in range(100, 215)])
+    also = _ticking([(t, 200.0 if t > 204 else 250.0 - (t - 150) * 0.5) for t in range(100, 215)])
+    sides = {"white": frozen, "black": also}
+    assert live_move_count(moves, sides, game_over_after=lambda n: n == 4) == 4
+    assert live_move_count(moves, {"white": frozen}) == 4
+
+
+def test_parse_clock_text_takes_the_time_at_the_end():
+    # Real case: a board coordinate "6" beside the clock read as a leading digit.
+    assert _parse_clock_text("~—606:55") == 415
+    assert _parse_clock_text("12:34") == 754
+    assert _parse_clock_text("1:22:46") == 4966

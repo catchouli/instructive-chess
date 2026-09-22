@@ -17,6 +17,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import chess
 import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -105,6 +106,13 @@ def fmt_clock(seconds: float | None) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
+def _game_over_after(moves_san: list[str], n: int) -> bool:
+    board = chess.Board()
+    for san in moves_san[:n]:
+        board.push_san(san)
+    return board.is_checkmate() or board.is_stalemate()
+
+
 def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> None:
     """Best-effort: read each game's own on-screen clock(s) over just that
     game's video window - bounded memory regardless of how long the source
@@ -136,6 +144,10 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> Non
                     for cbox in clock_read.find_clock_regions(frames, board_box, max_regions=CLOCK_MAX_CANDIDATES)]
         chosen = clock_read.assign_clock_sides(screened, board_box, g.flipped, CLOCK_MIN_COVERAGE)
         box_for = {id(rd): cbox for cbox, rd in screened}
+        if len(chosen) == 2:
+            g.clock_boxes = sorted(((int(c.x), int(c.y), int(c.w), int(c.h))
+                                    for c in (box_for[id(rd)] for rd in chosen.values())),
+                                   key=lambda b: b[1])
         clock_readings = {}
         for side, rd in chosen.items():
             full = clock_read.read_clock_ocr(frames, times, box_for[id(rd)])
@@ -143,6 +155,12 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> Non
                 clock_readings[side] = full
         if not clock_readings:
             continue
+
+        keep = clock_read.live_move_count(g.move_seconds, clock_readings,
+                                          lambda n: _game_over_after(g.moves_san, n))
+        if keep < len(g.moves_san):
+            g.moves_san = g.moves_san[:keep]
+            g.move_seconds = g.move_seconds[:keep]
 
         # Clock-based move revalidation (reconstruct's clock_by_side) is off:
         # its premise - a real move always costs the mover clock time - is
@@ -241,6 +259,18 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
                           round(box.w * scale), round(box.h * scale))
             frames_and_boxes.append((frame, scaled_box))
             reading = rating_read.read_ratings(frame, scaled_box, allow_region_fallback=False)
+            if len(g.clock_boxes) == 2:
+                # The row beside each clock outranks the band above/below
+                # the board wherever it reads: on lichess that band holds
+                # nothing useful, or the info panel naming both players.
+                upper, lower = ([round(v * scale) for v in b] for b in g.clock_boxes)
+                beside = rating_read.read_ratings_beside_clocks(frame, scaled_box, upper, lower)
+                reading = rating_read.RatingReading(
+                    top=beside.top if beside.top is not None else reading.top,
+                    bottom=beside.bottom if beside.bottom is not None else reading.bottom,
+                    top_confidence=1.0 + beside.top_confidence if beside.top is not None else reading.top_confidence,
+                    bottom_confidence=(1.0 + beside.bottom_confidence if beside.bottom is not None
+                                       else reading.bottom_confidence))
             # same top/bottom -> white/black convention as
             # clock_read.side_for_box: a broadcast always shows each
             # player's own info on their own side.
