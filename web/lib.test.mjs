@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   parseQuery, matchesPrefix, replay, toPgn, boardSvg, withTimestamp, fmtTime,
+  gameRating, matchesMinRating,
 } from './lib.js';
 
 let pass = 0;
@@ -75,6 +76,24 @@ t('withTimestamp / fmtTime', () => {
   assert.equal(withTimestamp('https://youtu.be/x', 0), 'https://youtu.be/x');
   assert.equal(fmtTime(70), '1:10');
   assert.equal(fmtTime(605), '10:05');
+});
+
+t('gameRating: higher of the two sides, or null', () => {
+  assert.equal(gameRating({ rating_white: 1200, rating_black: 2400 }), 2400);
+  assert.equal(gameRating({ rating_white: 2400, rating_black: 1200 }), 2400);
+  assert.equal(gameRating({ rating_white: 1800 }), 1800);
+  assert.equal(gameRating({}), null);
+  assert.equal(gameRating({ rating_white: null, rating_black: null }), null);
+});
+
+t('matchesMinRating: no filter passes everything, unknown rating excluded once active', () => {
+  const rated = { rating_white: 1500, rating_black: 1900 };
+  const unrated = {};
+  assert.equal(matchesMinRating(rated, null), true);
+  assert.equal(matchesMinRating(unrated, null), true);
+  assert.equal(matchesMinRating(rated, 1900), true);
+  assert.equal(matchesMinRating(rated, 1901), false);
+  assert.equal(matchesMinRating(unrated, 0), false);
 });
 
 t('end-to-end against data/games.json (if present)', () => {

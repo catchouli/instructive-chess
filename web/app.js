@@ -1,6 +1,6 @@
 import {
   parseQuery, matchesPrefix, replay, moveLabel, toPgn, boardSvg,
-  withTimestamp, fmtTime,
+  withTimestamp, fmtTime, gameRating, matchesMinRating,
 } from './lib.js';
 
 const DEFAULT_LIMIT = 20;   // games shown when the search box is empty
@@ -9,6 +9,7 @@ const RESULT_LIMIT = 50;    // cap on a filtered result set
 const els = {
   query: document.getElementById('query'),
   clear: document.getElementById('clear'),
+  minRating: document.getElementById('min-rating'),
   status: document.getElementById('status'),
   results: document.getElementById('results'),
 };
@@ -28,6 +29,7 @@ async function init() {
 
   els.query.addEventListener('input', debounce(render, 130));
   els.clear.addEventListener('click', () => { els.query.value = ''; render(); els.query.focus(); });
+  els.minRating.addEventListener('input', debounce(render, 130));
 
   const q = decodeURIComponent(location.hash.replace(/^#q=/, ''));
   if (q) els.query.value = q;
@@ -43,20 +45,22 @@ function render() {
   const raw = els.query.value;
   history.replaceState(null, '', raw ? '#q=' + encodeURIComponent(raw) : location.pathname + location.search);
   const { sans, ok, bad } = parseQuery(raw);
+  const minRating = els.minRating.value === '' ? null : Number(els.minRating.value);
 
-  const matched = GAMES.filter((g) => matchesPrefix(g, sans));
+  const matched = GAMES.filter((g) => matchesPrefix(g, sans) && matchesMinRating(g, minRating));
   const total = matched.length;
   const limit = sans.length === 0 ? DEFAULT_LIMIT : RESULT_LIMIT;
   const shown = matched.slice(0, limit);
+  const ratingNote = minRating != null ? ` · rated ${minRating}+` : '';
 
   if (!GAMES.length) {
     els.status.textContent = 'No games in the catalog yet — run the video scanner to add some.';
   } else if (!ok) {
-    els.status.innerHTML = `Illegal move <span class="bad">${escapeHtml(bad)}</span> — filtering on the ${sans.length} legal move${sans.length === 1 ? '' : 's'} before it.`;
+    els.status.innerHTML = `Illegal move <span class="bad">${escapeHtml(bad)}</span> — filtering on the ${sans.length} legal move${sans.length === 1 ? '' : 's'} before it.${ratingNote}`;
   } else if (sans.length === 0) {
-    els.status.textContent = `${GAMES.length} game${GAMES.length === 1 ? '' : 's'} in the catalog · showing the ${Math.min(DEFAULT_LIMIT, total)} most recent`;
+    els.status.textContent = `${total} game${total === 1 ? '' : 's'} in the catalog${ratingNote} · showing the ${Math.min(DEFAULT_LIMIT, total)} most recent`;
   } else {
-    els.status.textContent = `${total} game${total === 1 ? '' : 's'} start with ${sans.join(' ')}` +
+    els.status.textContent = `${total} game${total === 1 ? '' : 's'} start with ${sans.join(' ')}${ratingNote}` +
       (total > shown.length ? ` · showing the first ${shown.length}` : '');
   }
 
@@ -78,12 +82,16 @@ function card(g, hl) {
 
   const conf = g.confidence ?? 0;
   const cls = conf >= 0.9 ? 'good' : conf >= 0.75 ? 'ok' : 'weak';
+  const rating = gameRating(g);
+  const ratingPill = rating != null
+    ? `<span class="pill" title="higher-rated side (approximate - read from video)">~${rating}</span>` : '';
   const summary = document.createElement('summary');
   summary.innerHTML = `
     <span class="title">${escapeHtml(g.video_title || g.video_id)}</span>
     <span class="badges">
       <span class="pill">${g.ply} ply</span>
       <span class="pill ${cls}" title="reconstruction confidence">${Math.round(conf * 100)}%</span>
+      ${ratingPill}
     </span>
     <span class="meta">${escapeHtml(g.channel || 'Unknown')}${g.published ? ' · ' + g.published : ''}</span>
     <span class="moves-inline">${inlineMoves(g.moves_san, hl)}</span>`;
@@ -130,7 +138,17 @@ function detail(g) {
   moveWatch.rel = 'noopener';
   const clockLabel = document.createElement('div');
   clockLabel.className = 'clock-label';
-  boardCol.append(board, nav, clockLabel, moveWatch);
+  const ratingLabel = document.createElement('div');
+  ratingLabel.className = 'clock-label';
+  if (g.rating_white != null || g.rating_black != null) {
+    const parts = [];
+    if (g.rating_white != null) parts.push(`White ${g.rating_white}`);
+    if (g.rating_black != null) parts.push(`Black ${g.rating_black}`);
+    ratingLabel.textContent = `♟ ${parts.join(' · ')} (approximate)`;
+  } else {
+    ratingLabel.hidden = true;
+  }
+  boardCol.append(board, nav, clockLabel, ratingLabel, moveWatch);
 
   const positions = replay(g.moves_san);
   const hasTimes = Array.isArray(g.move_seconds) && g.move_seconds.length === g.moves_san.length;
