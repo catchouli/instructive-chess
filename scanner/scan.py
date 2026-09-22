@@ -49,6 +49,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--min-confidence", type=float, default=0.6,
                    help="drop games below this reconstruction confidence (default 0.6)")
     p.add_argument("--dry-run", action="store_true", help="print games, do not write games.json")
+    p.add_argument("--catalog", type=Path, default=catalog.DATA_FILE,
+                   help="catalog file to write (default web/data/games.json) - point experiments "
+                        "at a scratch copy, then score it with tests/benchmark.py --catalog")
     p.add_argument("--no-clocks", action="store_true", help="skip reading on-screen clocks")
     p.add_argument("--no-ratings", action="store_true", help="skip reading player ratings")
     return p.parse_args(argv)
@@ -100,21 +103,10 @@ def fmt_clock(seconds: float | None) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
-def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game],
-                     voted_readings: list[tuple[float, str | None]]) -> None:
+def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> None:
     """Best-effort: read each game's own on-screen clock(s) over just that
     game's video window - bounded memory regardless of how long the source
     video is, unlike decoding the whole thing into clock_read at once.
-
-    Also *revalidates* the game's already-reconstructed moves against the
-    clock evidence: a cancelled or changed premove puts a fully legal piece
-    placement on the board for several sampled frames without the mover's
-    clock ever ticking - board content alone can't tell that apart from a
-    real move (confirmed on a real video: this silently corrupted a game
-    from that point on), but re-running reconstruct.reconstruct() on this
-    same window with the clock data available lets it reject exactly that.
-    Only replaces the game's moves if reconstruction actually finds a
-    matching game in the revalidated result; otherwise leaves it untouched.
 
     Leaves clock_*_seconds at their empty default (see reconstruct.Game) for
     any game this can't read a clock confidently for: a missing clock
@@ -145,18 +137,13 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game],
         if not clock_readings:
             continue
 
-        clock_by_side = {
-            side: sorted((r.t, r.seconds) for r in readings if r.seconds is not None)
-            for side, readings in clock_readings.items()
-        }
-        window = [(t, p) for t, p in voted_readings if start <= t <= end]
-        revalidated = reconstruct.reconstruct(window, clock_by_side=clock_by_side)
-        match = next((rg for rg in revalidated
-                      if abs(rg.start_seconds - g.start_seconds) < 2 and rg.flipped == g.flipped), None)
-        if match is not None:
-            g.moves_san = match.moves_san
-            g.move_seconds = match.move_seconds
-            g.clean, g.bridged, g.skipped = match.clean, match.bridged, match.skipped
+        # Clock-based move revalidation (reconstruct's clock_by_side) is off:
+        # its premise - a real move always costs the mover clock time - is
+        # false for every game's first move per side (lichess and chess.com
+        # clocks only start after it) and for premoves. Fed the *true*
+        # clocks of a real lichess game (lAniuIChYuA vs lichess.org/jnY8B9ca)
+        # it rejected the game entirely; it only looked safe while one side's
+        # clock usually went undetected.
 
         for side, readings in clock_readings.items():
             values = clock_read.clock_at_times(readings, g.move_seconds)
@@ -351,12 +338,7 @@ def main(argv: list[str]) -> int:
         print("[5/6] reading clocks - skipped (--no-clocks)")
     else:
         print("[5/6] reading clocks")
-        annotate_clocks(src.path, box, kept, readings)
-        # revalidating against clock evidence can change a game's clean/
-        # bridged mix (and therefore its confidence) enough to cross the
-        # keep/drop threshold either way - re-apply the same filter rather
-        # than keeping a game whose confidence no longer clears the bar.
-        kept = [g for g in kept if g.confidence >= args.min_confidence and g.ply >= 2]
+        annotate_clocks(src.path, box, kept)
         n_clocked = sum(1 for g in kept if g.clock_white_seconds or g.clock_black_seconds)
         print(f"      clock data for {n_clocked}/{len(kept)} games")
 
@@ -386,8 +368,8 @@ def main(argv: list[str]) -> int:
         print("\n(dry run - games.json not modified)")
         return 0
 
-    added, total = catalog.merge(src, kept)
-    print(f"\nwrote {catalog.DATA_FILE}  (+{added} for this video, {total} total)")
+    added, total = catalog.merge(src, kept, args.catalog)
+    print(f"\nwrote {args.catalog}  (+{added} for this video, {total} total)")
     return 0
 
 
