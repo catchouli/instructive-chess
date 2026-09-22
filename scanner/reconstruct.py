@@ -69,6 +69,10 @@ class Game:
     # didn't find a confident reading for that side.
     rating_white: int | None = None
     rating_black: int | None = None
+    # The two clock widgets found for this game, (x, y, w, h) at scan
+    # resolution, upper first - rating reading uses them as an anchor (see
+    # rating_read.read_ratings_beside_clocks). Empty unless both were found.
+    clock_boxes: list[tuple[int, int, int, int]] = field(default_factory=list)
     clean: int = 0             # transitions resolved by a unique single legal move
     bridged: int = 0          # transitions resolved by a unique multi-move sequence
     skipped: int = 0          # readings stepped over as noise

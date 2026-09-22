@@ -181,14 +181,70 @@ def find_clock_regions(frames: list[np.ndarray], board_box, max_regions: int = 2
             # essentially never coincidentally produces - require at least
             # one segmented character to look like one.
             if len(chars) in (4, 5, 7) and any(_is_colon(mask, c) for c in chars):
-                found = (px0, py0, px1, py1)
+                found = (px0, py0, px1, py1, ref)
                 break
         if found is None:
             continue
-        px0, py0, px1, py1 = found
+        px0, py0, px1, py1, ref = found
+        px0, px1 = _grow_along_text_line(ref, px0, py0, px1, py1)
+        # A left-widened pad can reach back over the board's edge beside a
+        # clock panel (confirmed on a real lichess video: the crop took in a
+        # strip of board and the clock OCR'd in under half its frames).
+        if py0 < by + bh and by < py1:
+            if (px0 + px1) / 2 > bx + bw:
+                px0 = max(px0, bx + bw + 2)
+            elif (px0 + px1) / 2 < bx:
+                px1 = min(px1, bx - 2)
         cands.append((area, ClockBox(px0, py0, px1 - px0, py1 - py0)))
     cands.sort(key=lambda t: -t[0])
     return [box for _, box in cands[:max_regions]]
+
+
+def _grow_along_text_line(gray: np.ndarray, x0: int, y0: int, x1: int, y1: int,
+                          thresh: int = 40) -> tuple[int, int]:
+    """Widen a validated clock box sideways to the whole line of text.
+
+    The motion mask only lights up digits that change often, so a clock can
+    validate from a partial crop - confirmed on real lichess videos, the
+    top clock localized as just "9:2" of "09:28", which then OCR'd in under
+    10% of frames. Extend left/right while columns still hold ink, stopping
+    at a gap wider than about half the text height (the next UI element) or
+    at a column inked nearly top to bottom (a widget border, not text).
+    """
+    band = gray[y0:y1]
+    h, w = band.shape
+    if h == 0 or x1 <= x0:
+        return x0, x1
+    bg = float(np.median(band[:, x0:x1]))
+    ink = np.abs(band.astype(np.int16) - bg) > thresh
+    # A horizontal rule through the band (a separator line above a lichess
+    # clock - confirmed on a real video) inks every column and would hide
+    # every gap, growing the box into the next UI element; ignore rows
+    # inked across nearly the whole clock box (text never is).
+    text_rows = ink[:, x0:x1].mean(axis=1) < 0.8
+    if not text_rows.any():
+        return x0, x1
+    col_ink = ink[text_rows].mean(axis=0)
+    max_gap = max(3, h // 2)
+
+    def walk(start: int, stop: int, step: int) -> int:
+        edge, gap, x = start, 0, start
+        while x != stop:
+            if col_ink[x] > 0.8:
+                break
+            if col_ink[x] == 0:
+                gap += 1
+                if gap > max_gap:
+                    break
+            else:
+                gap = 0
+                edge = x
+            x += step
+        return edge
+
+    new_x0 = walk(x0 - 1, -1, -1) if x0 > 0 else x0
+    new_x1 = walk(x1, w, 1) + 1 if x1 < w else x1
+    return min(x0, new_x0), max(x1, new_x1)
 
 
 def _tight_ink_bbox(gray: np.ndarray, margin: int = 4, thresh: int = 40):
@@ -779,7 +835,7 @@ def _vote_for_anchors(votes: dict[int, dict[int, int]]) -> dict[int, int]:
 
 
 _CLOCK_TIME_RE = re.compile(
-    r"^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d))?$"
+    r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d))?$"
 )
 
 
@@ -810,7 +866,10 @@ def _parse_clock_text(raw: str) -> float | None:
     last_digit = max(i for i, c in enumerate(raw) if c.isdigit())
     trimmed = last_digit + 1 < len(raw)
     raw = raw[:last_digit + 1]
-    m = _CLOCK_TIME_RE.match(raw)
+    # Matched at the *end* rather than the start: junk ahead of the time
+    # can itself be a digit (confirmed on a real video: a board coordinate
+    # label beside the clock made "06:55" OCR as "606:55").
+    m = _CLOCK_TIME_RE.search(raw)
     if m:
         hours_s, a, b, tenths_s = m.groups()
         if hours_s is not None:
@@ -1243,15 +1302,29 @@ def assign_clock_sides(candidates: list[tuple[ClockBox, list[ClockReading]]],
 
     good = sorted(((coverage(rd), box, rd) for box, rd in candidates if coverage(rd) >= min_coverage),
                   key=lambda t: -t[0])
-    chosen: list[tuple[ClockBox, list[ClockReading]]] = []
-    for _, box, rd in good:
+    distinct: list[tuple[float, ClockBox, list[ClockReading]]] = []
+    for cov, box, rd in good:
         # the same clock found twice (e.g. at two crop widths) overlaps
         # vertically - a second, distinct clock never does
-        if any(box.y < b.y + b.h and b.y < box.y + box.h for b, _ in chosen):
+        if any(box.y < b.y + b.h and b.y < box.y + box.h for _, b, _ in distinct):
             continue
-        chosen.append((box, rd))
-        if len(chosen) == 2:
-            break
+        distinct.append((cov, box, rd))
+
+    def aligned(a: ClockBox, b: ClockBox) -> bool:
+        return a.x < b.x + b.w and b.x < a.x + a.w
+
+    # The two players' clocks share a column in every layout seen. Prefer
+    # the best-reading aligned pair: another real countdown elsewhere on
+    # screen (confirmed on a real video: a lichess arena's tournament timer)
+    # reads as well as a clock does, but isn't lined up with one.
+    pairs = [(ca + cb, (ba, ra), (bb, rb))
+             for i, (ca, ba, ra) in enumerate(distinct) for cb, bb, rb in distinct[i + 1:]]
+    aligned_pairs = [p for p in pairs if aligned(p[1][0], p[2][0])]
+    if aligned_pairs:
+        _, first, second = max(aligned_pairs, key=lambda p: p[0])
+        chosen = [first, second]
+    else:
+        chosen = [(box, rd) for _, box, rd in distinct[:2]]
 
     top_side, bottom_side = ("white", "black") if flipped else ("black", "white")
     if len(chosen) == 2:
@@ -1261,6 +1334,42 @@ def assign_clock_sides(candidates: list[tuple[ClockBox, list[ClockReading]]],
         box, rd = chosen[0]
         return {side_for_box(box, board_box, flipped): rd}
     return {}
+
+
+def live_move_count(move_times: list[float], readings_by_side: dict[str, list[ClockReading]],
+                    game_over_after=lambda n: False) -> int:
+    """How many of a game's moves were played while the game was still on:
+    trailing moves after which neither clock ever runs again are post-game
+    (analysis on the board, a result popup covering it) and are dropped.
+
+    A real move is always followed by the opponent's clock running - unless
+    it ended the game on the board, which `game_over_after(n)` (checkmate or
+    stalemate after the first n moves) reports. Confirmed on real videos:
+    4 moves "played" in 7s after the game ended with both clocks frozen, and
+    a line shown on the board after the opponent resigned.
+
+    Needs both clocks, and clocks seen running during the game - otherwise a
+    missing or frozen reading could look like "nobody's clock moved" and
+    this keeps every move. Never trims more than half the game, which would
+    point at a clock-reading problem rather than a post-game tail.
+    """
+    n = len(move_times)
+    if n == 0 or len(readings_by_side) < 2:
+        return n
+
+    def runs_after(t: float) -> bool:
+        for readings in readings_by_side.values():
+            vals = [r.seconds for r in readings if r.seconds is not None and r.t >= t + 1.0]
+            if vals and max(vals) - min(vals) >= 1:
+                return True
+        return False
+
+    if not runs_after(move_times[0] - 1.0):
+        return n
+    keep = n
+    while keep > 0 and not game_over_after(keep) and not runs_after(move_times[keep - 1]):
+        keep -= 1
+    return keep if keep >= n / 2 else n
 
 
 def clock_at_times(readings: list[ClockReading], query_times: list[float]) -> list[float | None]:
