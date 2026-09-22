@@ -7,8 +7,12 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+import cv2
+import numpy as np
 
 CACHE = Path(__file__).resolve().parent / "cache"
 
@@ -38,8 +42,11 @@ def video_id_from_url(url: str) -> str:
     return re.sub(r"[^0-9A-Za-z_-]", "_", url)[-32:]
 
 
-def _run(cmd: list[str]) -> str:
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd: list[str], timeout: float | None = None) -> str:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"command timed out after {timeout}s: {' '.join(cmd)}")
     if proc.returncode != 0:
         raise RuntimeError(f"command failed ({proc.returncode}): {' '.join(cmd)}\n{proc.stderr}")
     return proc.stdout
@@ -116,3 +123,46 @@ def fetch(target: str, max_height: int = 720) -> Source:
         url=meta.get("webpage_url") or target,
         duration=float(meta.get("duration") or 0.0),
     )
+
+
+def fetch_hires_frame(url: str, timestamp: float, max_height: int = 1080) -> np.ndarray | None:
+    """Grab one high-resolution frame near `timestamp`, without downloading
+    (or permanently caching) the whole video at that resolution.
+
+    The regular scan resolution (720p by default) is fine for board/clock
+    reading but too coarse for rating digits - confirmed while hand-building
+    rating_read.py's templates, where a rating's digits were only a few
+    pixels tall and touching at 720p. Since a rating never changes during a
+    game, only a single good frame is ever needed, so it's cheaper to fetch
+    a few seconds of a higher-resolution stream than to redo the whole scan
+    at that resolution. Returns None for anything this can't apply to (a
+    local file has no "higher-resolution" version to fetch) or that fails
+    (network hiccup, an unavailable format) - a missing rating reading is
+    expected and handled by callers already, same as clock_read.py's own
+    best-effort philosophy."""
+    if not _looks_like_url(url):
+        return None
+    start = max(0.0, timestamp - 2.0)
+    with tempfile.TemporaryDirectory() as tmp_str:
+        tmp = Path(tmp_str)
+        try:
+            # A per-game fetch like this can run many times in one scan (one
+            # per game found), unlike the single whole-video fetch() above -
+            # a bounded timeout keeps one slow/hung network call from
+            # stalling an entire scan rather than just costing one rating.
+            _run([
+                _ytdlp(), "-f", f"bestvideo[height<={max_height}]", "--no-warnings",
+                "--download-sections", f"*{start}-{start + 6}",
+                "-o", str(tmp / "clip.%(ext)s"),
+                url,
+            ], timeout=45)
+        except RuntimeError:
+            return None
+        clip = next((p for p in tmp.glob("clip.*")), None)
+        if clip is None:
+            return None
+        cap = cv2.VideoCapture(str(clip))
+        cap.set(cv2.CAP_PROP_POS_MSEC, (timestamp - start) * 1000)
+        ok, frame = cap.read()
+        cap.release()
+        return frame if ok else None

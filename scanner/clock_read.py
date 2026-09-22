@@ -38,10 +38,12 @@ actually clean it up.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
+import pytesseract
 
 _CHANGE_LO = 0.10   # a ticking clock changes less than 100% of frame-steps
 _CHANGE_HI = 0.85   # (only one side's clock runs at a time) but more than ~0
@@ -761,9 +763,98 @@ def _vote_for_anchors(votes: dict[int, dict[int, int]]) -> dict[int, int]:
     return seg_anchor
 
 
+_CLOCK_TIME_RE = re.compile(
+    r"^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d))?$"
+)
+
+
+def _parse_clock_text(raw: str) -> float | None:
+    """Parse OCR'd clock text into total seconds remaining. Handles every
+    format confirmed on real video: "M:SS" (e.g. "3:00"), "MM:SS" (e.g.
+    "09:50"), "H:MM:SS" for a long time control, and the "M:SS.T"
+    tenths-of-a-second display chess.com switches to once a clock drops
+    under ~4 seconds (see clock_read.py's module docstring history).
+
+    Deliberately conservative on anything that doesn't match one of these
+    shapes (e.g. a bare "555" with no colon at all, which could be a
+    genuine MMSS run Tesseract failed to put a colon in, or could just as
+    easily be noise) - reporting nothing is better than guessing wrong,
+    same philosophy as the rest of this module."""
+    raw = raw.strip()
+    # A leading icon (a pause/circle glyph some layouts render right before
+    # the digits - confirmed on a real video) can OCR as junk characters
+    # ahead of the actual time - trim anything before the first digit
+    # rather than anchoring the match at the very start of the string.
+    first_digit = next((i for i, c in enumerate(raw) if c.isdigit()), None)
+    if first_digit is None:
+        return None
+    raw = raw[first_digit:]
+    m = _CLOCK_TIME_RE.match(raw)
+    if m:
+        hours_s, a, b, tenths_s = m.groups()
+        if hours_s is not None:
+            hours, minutes, seconds = int(hours_s), int(a), int(b)
+        else:
+            hours, minutes, seconds = 0, int(a), int(b)
+        if minutes >= 60 or seconds >= 60:
+            return None
+        total = hours * 3600 + minutes * 60 + seconds
+        if tenths_s is not None:
+            total += int(tenths_s) / 10.0
+        return total
+    # Fallback: Tesseract occasionally drops the colon entirely (confirmed
+    # on a real video: "09:30" -> "0930"), leaving an unambiguous 3-4 bare
+    # digits - the same MM:SS width a real clock always renders at. Reject
+    # anything else bare (1-2 digits, or 5+) as too ambiguous to guess.
+    if raw.isdigit() and 3 <= len(raw) <= 4:
+        minutes, seconds = int(raw[:-2]), int(raw[-2:])
+        if seconds < 60:
+            return minutes * 60 + seconds
+    return None
+
+
+def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox) -> list[ClockReading]:
+    """Read a single clock's value directly from each frame via Tesseract -
+    no self-calibration, no bootstrap wraparound needed (contrast
+    read_clock below). Tested head-to-head against read_clock on several
+    real games: it has strictly higher coverage (self-calibration needs
+    ~10 real ticking seconds before it can read anything at all, Tesseract
+    reads the very first frame), and - more importantly - it caught real
+    self-calibration failures that read_clock reported with high or even
+    100% confidence: a clock self-calibration confidently read as "11:54"
+    for an entire game was actually "10:00" throughout (confirmed by eye),
+    a wrong anchor picked up early and propagated with full apparent
+    confidence for the rest of the game. This isn't a coverage tradeoff -
+    it's a strictly better mechanism for this module's job, since it never
+    needs a persistent per-video "digit font" model that a bad early guess
+    can corrupt for the rest of the video.
+
+    Runs the same outlier-rejection pass as read_clock afterward (a single
+    reading inconsistent with both neighbors' trend is more likely a
+    misread than a real jump) - Tesseract is far more reliable than the
+    old per-glyph classifier, but not perfect, and that check is generic
+    over any ClockReading sequence regardless of how it was produced.
+    """
+    readings = []
+    for t, frame in zip(times, frames):
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        x0, y0 = max(0, box.x - 3), max(0, box.y - 3)
+        crop = gray[y0:box.y + box.h + 3, x0:box.x + box.w + 3]
+        seconds = None
+        if crop.size > 0:
+            big = cv2.resize(crop, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC)
+            data = pytesseract.image_to_data(big, config="--psm 7", output_type=pytesseract.Output.DICT)
+            raw = "".join(tok for tok in data["text"] if tok.strip())
+            seconds = _parse_clock_text(raw)
+        readings.append(ClockReading(t=t, seconds=seconds))
+    return _reject_outliers(readings)
+
+
 def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> list[ClockReading]:
     """Read a single clock's value (in seconds) across a frame sequence,
     self-calibrating the digit font from the countdown's own behavior.
+    Superseded by read_clock_ocr above for actual use (see its docstring) -
+    kept for reference/comparison, not called from scan.py anymore.
 
     frames/times must be time-ordered. Somewhere in the sequence needs at
     least one real 0-9 wraparound of the seconds digit (about ten real
