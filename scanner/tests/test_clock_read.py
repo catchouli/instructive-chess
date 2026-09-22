@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from clock_read import (  # noqa: E402
     ClockBox,
     ClockReading,
+    assign_clock_sides,
+    _parse_clock_text,
     _bootstrap_ones_digits,
     _build_templates,
     _calibrate_same_sim,
@@ -547,3 +549,56 @@ def test_reject_outliers_keeps_a_real_increment():
     ]
     out = _reject_outliers(readings)
     assert [r.seconds for r in out] == [100.0, 99.0, 101.0, 100.0, 99.0]
+
+
+def _readings(n_ok: int, n_none: int) -> list[ClockReading]:
+    return ([ClockReading(t=float(i), seconds=300.0 - i) for i in range(n_ok)]
+            + [ClockReading(t=float(n_ok + i), seconds=None) for i in range(n_none)])
+
+
+def test_assign_clock_sides_prefers_candidates_that_read_as_clocks():
+    # Real case: moving T-shirt text outranked the real top clock by area;
+    # it never OCRs as a time, so it must lose to the clock that does.
+    board = (600, 60, 560, 560)
+    shirt = ClockBox(240, 670, 120, 47)
+    bottom = ClockBox(1150, 675, 96, 32)
+    top = ClockBox(1150, 13, 93, 33)
+    cands = [(shirt, _readings(2, 98)), (bottom, _readings(95, 5)), (top, _readings(90, 10))]
+    sides = assign_clock_sides(cands, board, flipped=False, min_coverage=0.5)
+    assert sides["white"] is cands[1][1]
+    assert sides["black"] is cands[2][1]
+
+
+def test_assign_clock_sides_uses_relative_position_for_a_stacked_panel():
+    # Real case: both clocks stacked in a panel above the board's middle -
+    # the upper one is still the top player's.
+    board = (560, 0, 717, 717)
+    upper = ClockBox(444, 70, 48, 27)
+    lower = ClockBox(441, 114, 53, 28)
+    cands = [(lower, _readings(80, 0)), (upper, _readings(80, 0))]
+    normal = assign_clock_sides(cands, board, flipped=False, min_coverage=0.5)
+    assert normal["black"] is cands[1][1] and normal["white"] is cands[0][1]
+    flipped = assign_clock_sides(cands, board, flipped=True, min_coverage=0.5)
+    assert flipped["white"] is cands[1][1] and flipped["black"] is cands[0][1]
+
+
+def test_assign_clock_sides_ignores_the_same_clock_found_twice():
+    board = (300, 4, 654, 654)
+    wide = ClockBox(864, 438, 238, 46)
+    narrow = ClockBox(922, 438, 180, 43)
+    cands = [(wide, _readings(90, 10)), (narrow, _readings(95, 5))]
+    sides = assign_clock_sides(cands, board, flipped=True, min_coverage=0.5)
+    assert list(sides.values()) == [cands[1][1]]
+
+
+def test_parse_clock_text_ignores_trailing_border_junk():
+    # Real case: the clock widget's border OCR'd as a trailing "|".
+    assert _parse_clock_text("3:58|") == 238
+    assert _parse_clock_text("2:4]") is None   # still conservative on a truncated time
+
+
+def test_parse_clock_text_no_bare_digit_guess_after_trimming_junk():
+    # Real case: "2:59" OCR'd as "F200}" - trimmed to "200" it would read as
+    # a confident but wrong 2:00.
+    assert _parse_clock_text("F200}") is None
+    assert _parse_clock_text("0930") == 570   # a clean colon-less read still works

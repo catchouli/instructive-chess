@@ -48,6 +48,8 @@ import pytesseract
 _CHANGE_LO = 0.10   # a ticking clock changes less than 100% of frame-steps
 _CHANGE_HI = 0.85   # (only one side's clock runs at a time) but more than ~0
 _DIFF_THRESH = 20   # per-pixel gray delta counted as "changed"
+_SAME_CROP_DELTA = 12   # max per-pixel delta for a clock crop to count as unchanged
+                        # (video compression noise, well below a digit changing)
 
 _GLYPH_H = 28            # every digit glyph is rescaled to this height for comparison -
                          # a 16px canvas measurably lost enough detail to confuse a real
@@ -71,9 +73,9 @@ class ClockBox:
         return frame_bgr[self.y:self.y + self.h, self.x:self.x + self.w]
 
 
-def find_clock_regions(frames: list[np.ndarray], board_box) -> list[ClockBox]:
-    """Locate up to 2 candidate clock widgets from a sequence of frames spaced
-    ~1s apart, spanning at least a a minute or so of real gameplay (so both
+def find_clock_regions(frames: list[np.ndarray], board_box, max_regions: int = 2) -> list[ClockBox]:
+    """Locate up to `max_regions` candidate clock widgets (largest first) from
+    a sequence of frames spaced ~1s apart, spanning at least a a minute or so of real gameplay (so both
     players' clocks get a chance to tick - only one runs at a time)."""
     grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
     freq = np.zeros_like(grays[0], dtype=np.float32)
@@ -186,7 +188,7 @@ def find_clock_regions(frames: list[np.ndarray], board_box) -> list[ClockBox]:
         px0, py0, px1, py1 = found
         cands.append((area, ClockBox(px0, py0, px1 - px0, py1 - py0)))
     cands.sort(key=lambda t: -t[0])
-    return [box for _, box in cands[:2]]
+    return [box for _, box in cands[:max_regions]]
 
 
 def _tight_ink_bbox(gray: np.ndarray, margin: int = 4, thresh: int = 40):
@@ -802,6 +804,12 @@ def _parse_clock_text(raw: str) -> float | None:
     if first_digit is None:
         return None
     raw = raw[first_digit:]
+    # Likewise trailing junk: the edge of the clock widget's own border can
+    # OCR as a stray "|" or "]" after the digits (confirmed on a real video:
+    # "3:58|").
+    last_digit = max(i for i, c in enumerate(raw) if c.isdigit())
+    trimmed = last_digit + 1 < len(raw)
+    raw = raw[:last_digit + 1]
     m = _CLOCK_TIME_RE.match(raw)
     if m:
         hours_s, a, b, tenths_s = m.groups()
@@ -819,14 +827,42 @@ def _parse_clock_text(raw: str) -> float | None:
     # on a real video: "09:30" -> "0930"), leaving an unambiguous 3-4 bare
     # digits - the same MM:SS width a real clock always renders at. Reject
     # anything else bare (1-2 digits, or 5+) as too ambiguous to guess.
-    if raw.isdigit() and 3 <= len(raw) <= 4:
+    # Only when nothing was trimmed off the end: junk there means the read
+    # is already unreliable (confirmed on a real video: "2:59" OCR'd as
+    # "F200}", which trims to a plausible-looking but wrong "2:00").
+    if not trimmed and raw.isdigit() and 3 <= len(raw) <= 4:
         minutes, seconds = int(raw[:-2]), int(raw[-2:])
         if seconds < 60:
             return minutes * 60 + seconds
     return None
 
 
-def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox) -> list[ClockReading]:
+def _tesseract_line(img: np.ndarray) -> str:
+    data = pytesseract.image_to_data(img, config="--psm 7", output_type=pytesseract.Output.DICT)
+    return "".join(tok for tok in data["text"] if tok.strip())
+
+
+def _clean_for_ocr(big: np.ndarray) -> np.ndarray:
+    """Binarize an upscaled clock crop to black text on white, drop ink
+    touching the crop's edge (the widget's own border/background), and add a
+    white margin. A fallback, not the default: on a dark-on-white chess.com
+    clock whose crop clips the widget's border this takes Tesseract from
+    reading nothing to reading nearly every frame, but on lichess's clocks it
+    reads fewer frames than the plain crop does."""
+    _, bw = cv2.threshold(big, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    h, w = bw.shape
+    if (bw[h // 4:3 * h // 4, w // 8:7 * w // 8] == 255).mean() < 0.5:
+        bw = 255 - bw   # light text on a dark widget
+    n, labels, stats, _ = cv2.connectedComponentsWithStats((bw == 0).astype(np.uint8), connectivity=8)
+    for i in range(1, n):
+        x, y, cw, ch, _ = stats[i]
+        if x == 0 or y == 0 or x + cw >= w or y + ch >= h:
+            bw[labels == i] = 255
+    return cv2.copyMakeBorder(bw, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+
+
+def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
+                   reject_outliers: bool = True) -> list[ClockReading]:
     """Read a single clock's value directly from each frame via Tesseract -
     no self-calibration, no bootstrap wraparound needed (contrast
     read_clock below). Tested head-to-head against read_clock on several
@@ -849,18 +885,29 @@ def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox) 
     over any ClockReading sequence regardless of how it was produced.
     """
     readings = []
+    prev_crop, prev_seconds = None, None
     for t, frame in zip(times, frames):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         x0, y0 = max(0, box.x - 3), max(0, box.y - 3)
         crop = gray[y0:box.y + box.h + 3, x0:box.x + box.w + 3]
+        # An idle clock sits unchanged for long stretches - reuse the last
+        # reading rather than re-running Tesseract on the same pixels.
+        if (prev_crop is not None and crop.shape == prev_crop.shape
+                and np.abs(crop.astype(np.int16) - prev_crop).max() <= _SAME_CROP_DELTA):
+            readings.append(ClockReading(t=t, seconds=prev_seconds))
+            continue
+        prev_crop = crop.astype(np.int16)
         seconds = None
         if crop.size > 0:
             big = cv2.resize(crop, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC)
-            data = pytesseract.image_to_data(big, config="--psm 7", output_type=pytesseract.Output.DICT)
-            raw = "".join(tok for tok in data["text"] if tok.strip())
-            seconds = _parse_clock_text(raw)
+            seconds = _parse_clock_text(_tesseract_line(big))
+            if seconds is None:
+                seconds = _parse_clock_text(_tesseract_line(_clean_for_ocr(big)))
+        prev_seconds = seconds
         readings.append(ClockReading(t=t, seconds=seconds))
-    return _reject_outliers(readings)
+    # The outlier pass assumes ~1s between frames; callers screening a
+    # sparse sample (just "does this region read as a clock?") turn it off.
+    return _reject_outliers(readings) if reject_outliers else readings
 
 
 def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> list[ClockReading]:
@@ -1171,6 +1218,49 @@ def side_for_box(clock_box: ClockBox, board_box, flipped: bool) -> str:
     bottom_side = "black" if flipped else "white"
     top_side = "white" if flipped else "black"
     return top_side if top else bottom_side
+
+
+def assign_clock_sides(candidates: list[tuple[ClockBox, list[ClockReading]]],
+                       board_box, flipped: bool, min_coverage: float
+                       ) -> dict[str, list[ClockReading]]:
+    """Pick the (at most two) real clocks out of several read candidates and
+    say whose each one is.
+
+    Candidates are ranked by how often they actually read as a clock, not by
+    size: motion-based localization also admits moving text that happens to
+    segment like "M:SS" (confirmed on a real video: "OH NO" on the streamer's
+    T-shirt outranked the real, dimmed top clock by area), but only a real
+    clock OCRs to a valid time frame after frame.
+
+    With two clocks, the upper one belongs to the player at the top of the
+    board - true in every layout seen, including ones that stack both clocks
+    in a side panel entirely above the board's middle (confirmed on a real
+    video, where side_for_box's board-centre rule gave both clocks to the same
+    player). A lone clock falls back to side_for_box.
+    """
+    def coverage(readings):
+        return sum(r.seconds is not None for r in readings) / max(len(readings), 1)
+
+    good = sorted(((coverage(rd), box, rd) for box, rd in candidates if coverage(rd) >= min_coverage),
+                  key=lambda t: -t[0])
+    chosen: list[tuple[ClockBox, list[ClockReading]]] = []
+    for _, box, rd in good:
+        # the same clock found twice (e.g. at two crop widths) overlaps
+        # vertically - a second, distinct clock never does
+        if any(box.y < b.y + b.h and b.y < box.y + box.h for b, _ in chosen):
+            continue
+        chosen.append((box, rd))
+        if len(chosen) == 2:
+            break
+
+    top_side, bottom_side = ("white", "black") if flipped else ("black", "white")
+    if len(chosen) == 2:
+        (upper, up_rd), (lower, low_rd) = sorted(chosen, key=lambda c: c[0].y)
+        return {top_side: up_rd, bottom_side: low_rd}
+    if len(chosen) == 1:
+        box, rd = chosen[0]
+        return {side_for_box(box, board_box, flipped): rd}
+    return {}
 
 
 def clock_at_times(readings: list[ClockReading], query_times: list[float]) -> list[float | None]:
