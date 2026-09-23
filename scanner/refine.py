@@ -51,8 +51,8 @@ def split_bunch(path_placements: list[str], dense: list[tuple[float, str]],
     consecutive dense frames are within one square of it (a single dense
     frame has no flicker vote, so one misread square is common), at least
     one of them exactly, each closer to it than to any other position on
-    the path; positions must appear in path order. A ply whose position wasn't seen keeps the time of the next
-    one that was (still confirmed together). None if nothing is split."""
+    the path; positions must appear in path order. None unless every ply
+    was seen on its own (see the all-or-nothing note below)."""
     k_seen: dict[int, float] = {}
     run_k, run_start, run_n, run_exact = None, None, 0, False
     last_k = -1
@@ -80,7 +80,11 @@ def split_bunch(path_placements: list[str], dense: list[tuple[float, str]],
         nxt = min(k_seen.get(k, nxt), nxt)
         times.append(nxt)
     times.reverse()
-    return times if len(set(times)) > 1 else None
+    # All or nothing: a partly split bunch leaves smaller bunches that
+    # trust.py would treat as ordinary ones, though they came out of a big,
+    # riskier one (confirmed on a real game: a 4-ply bunch split 1+1+2 left
+    # a trusted pair holding the wrong move).
+    return times if len(set(times)) == len(times) else None
 
 
 def refine_game(path: Path, box, model, game: reconstruct.Game, iter_frames) -> int:

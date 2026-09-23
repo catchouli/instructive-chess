@@ -623,7 +623,7 @@ def test_live_move_count_drops_moves_after_both_clocks_stop():
 def test_live_move_count_keeps_a_mating_final_move_and_needs_both_clocks():
     moves = [100, 150, 204, 208]
     frozen = _ticking([(t, 300.0 if t > 150 else 300.0 - (t - 100)) for t in range(100, 215)])
-    also = _ticking([(t, 200.0 if t > 204 else 250.0 - (t - 150) * 0.5) for t in range(100, 215)])
+    also = _ticking([(t, 192.0 if t > 208 else 250.0 - max(0, t - 150)) for t in range(100, 215)])   # black mates at 208, thinking up to it
     sides = {"white": frozen, "black": also}
     assert live_move_count(moves, sides, game_over_after=lambda n: n == 4) == 4
     assert live_move_count(moves, {"white": frozen}) == 4
@@ -667,3 +667,21 @@ def test_live_move_count_ignores_a_clock_rising_after_the_game():
     white = _ticking([(t, 300 - min(t, 150) + 100 + (6 if t >= 212 else 0)) for t in range(100, 220)])
     black = _ticking([(t, 400 - min(t, 206) + 100) for t in range(100, 220)])
     assert live_move_count(moves, {"white": white, "black": black}) == 9
+
+
+def test_live_move_count_ignores_an_analysis_mate_after_the_clocks_stopped():
+    # Real shape: the game ends at t=392; a mating line is then shown with
+    # both clocks frozen - its "mate" must not keep it.
+    moves = [100, 150, 200, 250, 300, 340, 370, 392, 400, 420, 421, 423]
+    white = _ticking([(t, 400 - min(t, 392) + 100) for t in range(100, 426)])
+    black = _ticking([(t, 400 - min(max(t, 150), 396) + 150) for t in range(100, 426)])
+    sides = {"white": white, "black": black}
+    assert live_move_count(moves, sides, game_over_after=lambda n: n == 12) == 8
+
+
+def test_live_move_count_keeps_a_real_mate():
+    # The mating side's clock runs up to the mating move.
+    moves = [100, 150, 200, 250, 300, 340, 370, 392]
+    white = _ticking([(t, 400 - min(t, 392) + 100) for t in range(100, 400)])
+    black = _ticking([(t, 300.0) for t in range(100, 400)])
+    assert live_move_count(moves, {"white": white, "black": black}, game_over_after=lambda n: n == 8) == 8

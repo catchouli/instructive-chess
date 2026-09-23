@@ -19,7 +19,9 @@ def _clock_seconds(values: list[float | None]) -> list[int | None]:
 def add_trust(entry: dict) -> None:
     """Per-move confidence and how many plies the web app should show (see
     trust.py). Every move stays in the data either way."""
-    entry["move_confidence"], entry["trusted_ply"] = trust.assess(entry["moves_san"], entry["move_seconds"])
+    both_clocks = bool(entry.get("clock_white_seconds")) and bool(entry.get("clock_black_seconds"))
+    entry["move_confidence"], entry["trusted_ply"] = trust.assess(entry["moves_san"], entry["move_seconds"],
+                                                                  clocks_checked_end=both_clocks)
 
 
 def _entry(source: Source, game: Game, index: int) -> dict:
@@ -41,7 +43,6 @@ def _entry(source: Source, game: Game, index: int) -> dict:
         "flipped": game.flipped,
         "scanned_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    add_trust(entry)
     # Only present when clock reading found a usable clock for this game -
     # older/unread entries simply omit these rather than carry an all-null
     # array, so the web app can tell "not attempted" from "attempted, empty".
@@ -55,6 +56,7 @@ def _entry(source: Source, game: Game, index: int) -> dict:
         entry["rating_white"] = game.rating_white
     if game.rating_black is not None:
         entry["rating_black"] = game.rating_black
+    add_trust(entry)   # last: it looks at the clock fields
     return entry
 
 

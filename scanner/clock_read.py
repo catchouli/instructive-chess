@@ -1492,10 +1492,25 @@ def live_move_count(move_times: list[float], readings_by_side: dict[str, list[Cl
                 return True
         return False
 
+    def ran_before(k: int) -> bool:
+        # did any clock go down in the run-up to ply k - someone thinking?
+        t0 = move_times[k - 2] if k >= 2 else move_times[0] - 30.0
+        t1 = move_times[k - 1] + 0.5
+        for readings in readings_by_side.values():
+            vals = [r.seconds for r in readings if r.seconds is not None and t0 < r.t <= t1]
+            if any(b <= a - 1 for a, b in zip(vals, vals[1:])):
+                return True
+        return False
+
     if not runs_after(move_times[0] - 1.0):
         return n
     keep = n
-    while keep > 0 and not game_over_after(keep) and not runs_after(move_times[keep - 1]):
+    # A mate only ends the game if someone's clock was running as it was
+    # found: instructive videos show mating lines after a resignation too,
+    # with both clocks frozen (confirmed on a real video: six analysis
+    # plies ending "Rxf8#" were kept as the game's real ending).
+    while keep > 0 and not (game_over_after(keep) and ran_before(keep)) \
+            and not runs_after(move_times[keep - 1]):
         keep -= 1
     return keep if keep >= n / 2 else n
 

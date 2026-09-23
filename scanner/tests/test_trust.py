@@ -21,7 +21,14 @@ def test_trust_ends_one_ply_before_a_big_bunch():
     assert conf[6:9] == [trust.CONF_BUNCH_BIG] * 3
 
 
-def test_an_early_pair_is_fine_and_a_mate_keeps_its_ending():
+def test_an_early_pair_is_fine_and_a_clock_checked_mate_keeps_its_ending():
     mate = ["f3", "e5", "g4", "Qh4#"]
-    conf, trusted = trust.assess(mate, [1, 2, 2, 3])       # an early 2-ply bunch, then mate
+    conf, trusted = trust.assess(mate, [1, 2, 2, 3], clocks_checked_end=True)
     assert trusted == 4
+
+
+def test_an_unchecked_mate_is_held_back_like_any_ending():
+    # Videos show mating lines after a resignation too.
+    mate = ["f3", "e5", "g4", "Qh4#"]
+    conf, trusted = trust.assess(mate, [1, 2, 2, 3])
+    assert trusted == 4 - trust.TAIL_PLIES
