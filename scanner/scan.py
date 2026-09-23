@@ -46,10 +46,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="scan.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("target", help="YouTube URL or path to a local video file")
-    p.add_argument("--fps", type=float, default=2.0,
-                   help="frames sampled per second (default 2) - at 1 fps fast moves often land "
-                        "several to a reading, which is where games go wrong (see trust.py); 2 fps "
-                        "on a real video took a game from 1 trusted ply to 31, for ~1.3x the scan time")
+    p.add_argument("--fps", type=float, default=1.0,
+                   help="frames sampled per second (default 1). Whole-video 2 fps was tried: it split "
+                        "fast moves apart but halved recognize.vote_stream's flicker window (a fixed "
+                        "frame count), and on the full library more games went wrong than right")
     p.add_argument("--max-height", type=int, default=720, help="cap download resolution (default 720)")
     p.add_argument("--start", type=float, default=0.0, help="start time in seconds")
     p.add_argument("--end", type=float, default=0.0, help="end time in seconds (0 = to end)")
