@@ -307,3 +307,28 @@ def test_a_real_repetition_is_still_played():
     shuffle = ["e4", "Nf6", "Nf3", "Ng8", "Ng1", "Nf6", "Nf3", "e6"]
     games = run(stream_for(shuffle))
     assert games[0].moves_san == shuffle
+
+
+def test_a_shown_and_undone_line_is_retracted():
+    # Real pattern (recap video): a line that was NOT played is shown, then
+    # stepped back - and each backward step is itself a legal move (Bf5 Nd4
+    # Bc8 N4f3), so the game used to gain the whole loop. The undo steps
+    # arrive bunched in one reading, unlike a real repetition's moves.
+    played = ITALIAN[:8]
+    board = chess.Board()
+    for san in played:
+        board.push_san(san)
+    loop = []
+    for san in ("Ng5", "Qe7", "Nf3", "Qd8"):   # out and back; the game went d4
+        board.push_san(san)
+        loop.append(_placement_of(board))
+    pos = _positions(ITALIAN)
+    readings = stream_for(played)
+    ts = readings[-1][0] + 1
+    readings += [(ts, loop[0]), (ts + 1, loop[1])]         # shown one ply at a time...
+    readings += [(ts + 2, loop[2]), (ts + 2, loop[3])]     # ...undone in one burst
+    ts += 3
+    for p in pos[9:]:
+        readings += [(ts, p), (ts + 1, p)]
+        ts += 2
+    assert run(readings)[0].moves_san == ITALIAN

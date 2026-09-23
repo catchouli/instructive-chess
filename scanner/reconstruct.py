@@ -22,6 +22,7 @@ START_FLIPPED = START[::-1]
 MAX_DEPTH = 6          # half-moves a single transition may bridge in one hop
 MAX_MISSES = 10        # consecutive unexplainable readings before a game is closed
 GAP_FRAMES = 10         # this many consecutive board-less frames ends a game
+DETOUR_MAX_PLIES = 8   # longest shown-then-undone line retracted (see the detour check)
 MAX_PLIES = 400
 OPEN_DEPTH = 5         # a video that skips the opening frames: accept an early
 OPEN_HAMMING = 16     # position implied uniquely from the standard start
@@ -418,6 +419,13 @@ def reconstruct(readings: list[tuple[float, str | None]],
         current, board = None, None
         history, browsing = [], False
 
+    def retract_to(k: int) -> None:
+        nonlocal board
+        del current.moves_san[k:], current.move_seconds[k:], history[k + 1:]
+        board = chess.Board()
+        for san in current.moves_san:
+            board.push_san(san)
+
     misses = 0
     for kind, ts, placement in events:
         if kind == "gap":
@@ -514,6 +522,22 @@ def reconstruct(readings: list[tuple[float, str | None]],
             current.clean += 1
         else:
             current.bridged += 1
+
+        # A detour: the board went ahead (or sideways) and came back to a
+        # position already reached - confirmed on real recap videos, a
+        # future line was shown and then stepped back ("Bf5 Nd4" then
+        # "Bc8 N4f3"), each step a legal-looking move, so the game got 4
+        # extra plies. A real repetition (Nf3 Nf6 Ng1 Ng8) has the same
+        # shape but its moves come one per reading with time between;
+        # a detour's come bunched, several plies seen at once. So a return
+        # within DETOUR_MAX_PLIES that includes bunched plies is retracted.
+        n = len(history) - 1
+        back = next((k for k in range(n - 1, max(-1, n - DETOUR_MAX_PLIES - 1), -1)
+                     if history[k] == history[n]), None)
+        if back is not None:
+            loop_times = current.move_seconds[back:n]
+            if len(set(loop_times)) < len(loop_times):
+                retract_to(back)
 
         if board.is_checkmate() or board.is_stalemate():
             # no legal move exists from here - anything read after this point
