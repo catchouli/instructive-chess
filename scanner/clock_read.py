@@ -39,6 +39,7 @@ actually clean it up.
 from __future__ import annotations
 
 import bisect
+from collections import Counter
 import re
 from dataclasses import dataclass
 
@@ -967,7 +968,7 @@ def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
         readings.append(ClockReading(t=t, seconds=seconds))
     # The outlier pass assumes ~1s between frames; callers screening a
     # sparse sample (just "does this region read as a clock?") turn it off.
-    return _reject_outliers(readings) if reject_outliers else readings
+    return _physically_consistent(_reject_outliers(readings)) if reject_outliers else readings
 
 
 def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> list[ClockReading]:
@@ -1235,6 +1236,56 @@ def _corrected_ticks(rel_ticks: list[int], seg_id: list[int],
     return offsets
 
 
+def _physically_consistent(readings: list[ClockReading], max_gain: float = 12.0,
+                           tol: float = 30.0, lookback: int = 400) -> list[ClockReading]:
+    """Keep the largest set of readings a real clock could have produced,
+    blanking the rest.
+
+    A clock only counts down - never faster than real time - apart from a
+    few seconds of increment after a move. _reject_outliers catches a single
+    stray frame, but not a misread that *repeats*: chess.com dims an idle
+    clock and Tesseract can read the dimmed digits wrong the same way for
+    several frames running (confirmed on a real game: "8:50" read as 409,
+    49 or 4355 for 5-6 frames at a time, each run agreeing with itself).
+    Runs of equal consecutive values are chained by dynamic programming,
+    maximizing readings kept, where each step may rise by at most
+    `max_gain` (an increment) and drop by at most the time elapsed plus
+    `tol`. That drop allowance is deliberately generous: when a move
+    arrives, the site corrects its displayed clock for network lag, so a
+    real clock can jump down several seconds at once (confirmed: 361 -> 351
+    in one second, the true value being 350.9). A misread gives itself away
+    by coming back *up* afterwards (530 -> 49 -> 529), which the rise limit
+    rejects.
+    """
+    runs: list[list] = []   # [first_t, last_t, value, indices]
+    for i, r in enumerate(readings):
+        if r.seconds is None:
+            continue
+        if runs and runs[-1][2] == r.seconds:
+            runs[-1][1] = r.t
+            runs[-1][3].append(i)
+        else:
+            runs.append([r.t, r.t, r.seconds, [i]])
+    if len(runs) < 2:
+        return readings
+    best = [len(run[3]) for run in runs]
+    prev = [-1] * len(runs)
+    for j in range(1, len(runs)):
+        tj, vj = runs[j][0], runs[j][2]
+        for i in range(max(0, j - lookback), j):
+            vi, ti = runs[i][2], runs[i][1]
+            if vj <= vi + max_gain and vi - vj <= (tj - ti) + tol:
+                if best[i] + len(runs[j][3]) > best[j]:
+                    best[j], prev[j] = best[i] + len(runs[j][3]), i
+    keep: set[int] = set()
+    j = max(range(len(runs)), key=lambda k: best[k])
+    while j != -1:
+        keep.update(runs[j][3])
+        j = prev[j]
+    return [r if (r.seconds is None or i in keep) else ClockReading(r.t, None)
+            for i, r in enumerate(readings)]
+
+
 def _reject_outliers(readings: list[ClockReading], tol: float = 3.0) -> list[ClockReading]:
     """Drop individual readings that don't fit either neighbor's trend.
 
@@ -1373,27 +1424,35 @@ def live_move_count(move_times: list[float], readings_by_side: dict[str, list[Cl
     return keep if keep >= n / 2 else n
 
 
-def mover_sample_times(move_times: list[float], mover_is_side: list[bool],
-                       after_last: float = 2.0) -> list[float]:
-    """When to sample one side's clock for each ply.
+def clock_at_moves(readings: list[ClockReading], move_times: list[float],
+                   mover_is_side: list[bool], after_last: float = 3.0) -> list[float | None]:
+    """One side's clock value for each ply.
 
-    For a ply this side made, sample just before the *next* ply is seen
-    rather than at the moment its own move is: a mover's clock is frozen
-    from their move until the opponent's, while the time a move is seen
-    comes from majority-voted board readings and can land a second or two
-    before the move really happened - confirmed on real games, sampling at
-    the move's own time read the clock still running, 4-6s high. For the
-    other side's plies (and a last ply with nothing after it, sampled
-    `after_last` seconds on) the move's own time is used.
+    For a ply this side made, the value is the one its clock shows most
+    often between that move and the next ply: a mover's clock is frozen
+    over exactly that stretch. Sampling at a single instant instead is at
+    the mercy of when moves are *seen* - the time comes from majority-voted
+    board readings and lands a second or two early or late (confirmed on
+    real games: sampling at the move's own time read the clock still
+    running, 4-6s high; sampling just before the next ply read it already
+    running again whenever that ply was seen late). For the other side's
+    plies, and when the stretch holds no readings (several plies seen in one
+    reading), it's the latest reading at or before the move.
     """
-    out = []
+    at_move = clock_at_times(readings, move_times)
+    valid = sorted((r.t, r.seconds) for r in readings if r.seconds is not None)
+    out = list(at_move)
     n = len(move_times)
     for i, t in enumerate(move_times):
-        q = t
-        if mover_is_side[i]:
-            nxt = move_times[i + 1] if i + 1 < n else t + after_last + 0.5
-            q = max(t, nxt - 0.5)
-        out.append(q)
+        if not mover_is_side[i]:
+            continue
+        end = move_times[i + 1] if i + 1 < n else t + after_last
+        vals = [v for rt, v in valid if t <= rt < end]
+        if vals:
+            counts = Counter(vals)
+            best = max(counts.values())
+            # ties: the latest of the most common values
+            out[i] = next(v for v in reversed(vals) if counts[v] == best)
     return out
 
 
@@ -1402,7 +1461,7 @@ def clock_at_times(readings: list[ClockReading], query_times: list[float]) -> li
     recent sampled reading at or before it - a clock only ever moves
     forward between samples, so the last known value is the best available
     answer for "what did it read at this instant". `query_times` needn't
-    be sorted (see mover_sample_times)."""
+    be sorted (see clock_at_moves)."""
     ordered = sorted((r.t, r.seconds) for r in readings if r.seconds is not None)
     times = [t for t, _ in ordered]
     out: list[float | None] = []

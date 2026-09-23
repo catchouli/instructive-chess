@@ -22,8 +22,9 @@ from clock_read import (  # noqa: E402
     ClockReading,
     assign_clock_sides,
     live_move_count,
-    mover_sample_times,
+    clock_at_moves,
     _parse_clock_text,
+    _physically_consistent,
     _bootstrap_ones_digits,
     _build_templates,
     _calibrate_same_sim,
@@ -635,11 +636,27 @@ def test_parse_clock_text_takes_the_time_at_the_end():
     assert _parse_clock_text("1:22:46") == 4966
 
 
-def test_mover_sample_times_waits_for_the_opponents_move():
-    # A mover's clock is frozen from their move until the opponent's; sample
-    # it just before the next ply is seen, not when their own move was.
-    times = [10.0, 20.0, 20.0, 35.0]
-    white = [True, False, True, False]
-    assert mover_sample_times(times, white) == [19.5, 20.0, 34.5, 35.0]
-    black = [not m for m in white]
-    assert mover_sample_times(times, black, after_last=2.0) == [10.0, 20.0, 20.0, 37.0]
+def test_clock_at_moves_uses_the_value_held_while_frozen():
+    # White moves at t=10 (seen ~2s early: clock still running until 12),
+    # black replies at t=20 but is seen late (t=21, white's clock already
+    # running again). The frozen value in between is what counts.
+    white_clock = [ClockReading(t=float(t), seconds=v) for t, v in
+                   [(8, 300), (9, 299), (10, 298), (11, 297), (12, 296), (13, 296), (14, 296),
+                    (15, 296), (16, 296), (17, 296), (18, 296), (19, 296), (20, 296), (21, 295)]]
+    times = [10.0, 21.0]
+    assert clock_at_moves(white_clock, times, [True, False]) == [296, 295]
+
+
+def test_physically_consistent_drops_a_repeated_misread():
+    # Real shape: a dimmed idle clock misread the same way for 5 frames
+    # ("8:50" -> 49), then read right again.
+    vals = [532, 531, 530, 49, 49, 49, 49, 49, 529, 528, 527]
+    rd = [ClockReading(t=float(1024 + i), seconds=v) for i, v in enumerate(vals)]
+    out = [r.seconds for r in _physically_consistent(rd)]
+    assert out == [532, 531, 530, None, None, None, None, None, 529, 528, 527]
+
+
+def test_physically_consistent_keeps_a_frozen_clock_and_an_increment():
+    vals = [300, 299, 298, 298, 298, 298, 303, 302]   # frozen, then +5 increment
+    rd = [ClockReading(t=float(i), seconds=v) for i, v in enumerate(vals)]
+    assert [r.seconds for r in _physically_consistent(rd)] == vals
