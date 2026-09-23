@@ -114,3 +114,28 @@ export function fmtTime(s) {
   s = Math.floor(s);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
+
+/**
+ * The part of a game the scanner is sure of: moves (and their times and
+ * clocks) cut to `trusted_ply` - see scanner/trust.py. The catalog keeps
+ * every move with a per-move confidence, but a wrong move in a searchable
+ * catalog is worse than a shorter game, so only trusted moves are shown or
+ * searched. Returns null when nothing is trusted. Entries without
+ * `trusted_ply` (older catalogs) are shown in full.
+ */
+export function trustedView(game) {
+  const n = Number.isInteger(game.trusted_ply) ? game.trusted_ply : game.moves_san.length;
+  if (n <= 0) return null;
+  if (n >= game.moves_san.length) return game;
+  const cut = (arr) => (Array.isArray(arr) ? arr.slice(0, n) : arr);
+  return {
+    ...game,
+    moves_san: game.moves_san.slice(0, n),
+    move_seconds: cut(game.move_seconds),
+    clock_white_seconds: cut(game.clock_white_seconds),
+    clock_black_seconds: cut(game.clock_black_seconds),
+    move_confidence: cut(game.move_confidence),
+    ply: n,
+    pgn: toPgn(game.moves_san.slice(0, n)),
+  };
+}
