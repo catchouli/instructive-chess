@@ -51,7 +51,7 @@ TRUTH_CACHE = VIDEO_CACHE / "truth"
 
 # chess.com accounts whose games appear on each channel.
 ACCOUNTS = {
-    "Eric Rosen": ["imrosen", "ohnomyrosen"],
+    "Eric Rosen": ["imrosen", "ohnomyrosen", "someonecallanambulance"],
     "Daniel Naroditsky": ["SenseiDanya", "OhMyLands", "danielnaroditsky"],
 }
 # lichess accounts, searched via the per-user export. That endpoint needs a
