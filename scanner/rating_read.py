@@ -685,8 +685,24 @@ def read_ratings_beside_clocks(frame_bgr: np.ndarray, board_box, upper_clock, lo
             return None
         return _row_rating(gray, x0, y0, w_img, y1, from_top=below)
 
-    top = band(upper_clock, True, lower_clock)
-    bottom = band(lower_clock, False, upper_clock)
+    def same_row(clock):
+        # Naroditsky's overlay (and similar): both clocks stacked in a side
+        # panel, each on the same row as "name (rating)" to its left - the
+        # rows above/below a clock there are the other player's row
+        # (confirmed on real videos, where only a wide fallback search found
+        # anything, and it read "(1222)" as 231). The small grey text there
+        # sits on a textured background, and OCR'ing the whole row dropped
+        # digits too ("(1231)" -> 231); the paren-anchored reader, which
+        # OCRs only the digits between "(" and ")", returned either nothing
+        # or the right value.
+        cx, cy, cw, ch = clock
+        if cx < bx + bw and bx < cx + cw:
+            return None
+        x0 = bx + bw + 4 if cx > bx + bw else 0
+        return _rating_in_band(gray, cy - ch // 2, cy + ch, x0, cx - 2)
+
+    top = band(upper_clock, True, lower_clock) or same_row(upper_clock)
+    bottom = band(lower_clock, False, upper_clock) or same_row(lower_clock)
     return RatingReading(top=top[0] if top else None, bottom=bottom[0] if bottom else None,
                          top_confidence=top[1] if top else None,
                          bottom_confidence=bottom[1] if bottom else None)
