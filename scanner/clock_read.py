@@ -38,6 +38,7 @@ actually clean it up.
 """
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass
 
@@ -1372,20 +1373,40 @@ def live_move_count(move_times: list[float], readings_by_side: dict[str, list[Cl
     return keep if keep >= n / 2 else n
 
 
+def mover_sample_times(move_times: list[float], mover_is_side: list[bool],
+                       after_last: float = 2.0) -> list[float]:
+    """When to sample one side's clock for each ply.
+
+    For a ply this side made, sample just before the *next* ply is seen
+    rather than at the moment its own move is: a mover's clock is frozen
+    from their move until the opponent's, while the time a move is seen
+    comes from majority-voted board readings and can land a second or two
+    before the move really happened - confirmed on real games, sampling at
+    the move's own time read the clock still running, 4-6s high. For the
+    other side's plies (and a last ply with nothing after it, sampled
+    `after_last` seconds on) the move's own time is used.
+    """
+    out = []
+    n = len(move_times)
+    for i, t in enumerate(move_times):
+        q = t
+        if mover_is_side[i]:
+            nxt = move_times[i + 1] if i + 1 < n else t + after_last + 0.5
+            q = max(t, nxt - 0.5)
+        out.append(q)
+    return out
+
+
 def clock_at_times(readings: list[ClockReading], query_times: list[float]) -> list[float | None]:
     """The clock's value at each of `query_times`, taken from the most
     recent sampled reading at or before it - a clock only ever moves
     forward between samples, so the last known value is the best available
-    answer for "what did it read at this instant". `query_times` must be
-    sorted ascending (true of a game's own move_seconds, which this is
-    built to be queried with)."""
+    answer for "what did it read at this instant". `query_times` needn't
+    be sorted (see mover_sample_times)."""
     ordered = sorted((r.t, r.seconds) for r in readings if r.seconds is not None)
+    times = [t for t, _ in ordered]
     out: list[float | None] = []
-    j = 0
-    last: float | None = None
     for qt in query_times:
-        while j < len(ordered) and ordered[j][0] <= qt:
-            last = ordered[j][1]
-            j += 1
-        out.append(last)
+        j = bisect.bisect_right(times, qt)
+        out.append(ordered[j - 1][1] if j else None)
     return out

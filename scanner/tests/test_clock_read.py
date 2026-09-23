@@ -22,6 +22,7 @@ from clock_read import (  # noqa: E402
     ClockReading,
     assign_clock_sides,
     live_move_count,
+    mover_sample_times,
     _parse_clock_text,
     _bootstrap_ones_digits,
     _build_templates,
@@ -632,3 +633,13 @@ def test_parse_clock_text_takes_the_time_at_the_end():
     assert _parse_clock_text("~—606:55") == 415
     assert _parse_clock_text("12:34") == 754
     assert _parse_clock_text("1:22:46") == 4966
+
+
+def test_mover_sample_times_waits_for_the_opponents_move():
+    # A mover's clock is frozen from their move until the opponent's; sample
+    # it just before the next ply is seen, not when their own move was.
+    times = [10.0, 20.0, 20.0, 35.0]
+    white = [True, False, True, False]
+    assert mover_sample_times(times, white) == [19.5, 20.0, 34.5, 35.0]
+    black = [not m for m in white]
+    assert mover_sample_times(times, black, after_last=2.0) == [10.0, 20.0, 20.0, 37.0]
