@@ -922,6 +922,26 @@ def _clean_for_ocr(big: np.ndarray) -> np.ndarray:
     return cv2.copyMakeBorder(bw, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
 
 
+def _widget_interior_for_ocr(big: np.ndarray, delta: int = 40) -> np.ndarray | None:
+    """Binarize only the inside of the clock widget. An idle clock in some
+    skins is light grey text on a grey box (confirmed on a real video,
+    ~150 on ~110 inside a ~47 surround): thresholding the whole crop splits
+    box from surround and loses the digits, but inside the box alone Otsu
+    separates them cleanly. The widget is whatever differs from the crop's
+    border colour."""
+    border = np.concatenate([big[0], big[-1], big[:, 0], big[:, -1]])
+    widget = np.abs(big.astype(np.int16) - float(np.median(border))) > delta
+    ys, xs = np.nonzero(widget)
+    if len(xs) == 0:
+        return None
+    h, w = big.shape
+    m = max(2, h // 12)
+    y0, y1, x0, x1 = ys.min() + m, ys.max() - m, xs.min() + m, xs.max() - m
+    if y1 - y0 < h // 4 or x1 - x0 < w // 4:
+        return None
+    return _clean_for_ocr(big[y0:y1, x0:x1])
+
+
 def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
                    reject_outliers: bool = True) -> list[ClockReading]:
     """Read a single clock's value directly from each frame via Tesseract -
@@ -964,6 +984,10 @@ def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
             seconds = _parse_clock_text(_tesseract_line(big))
             if seconds is None:
                 seconds = _parse_clock_text(_tesseract_line(_clean_for_ocr(big)))
+            if seconds is None:
+                inner = _widget_interior_for_ocr(big)
+                if inner is not None:
+                    seconds = _parse_clock_text(_tesseract_line(inner))
         prev_seconds = seconds
         readings.append(ClockReading(t=t, seconds=seconds))
     # The outlier pass assumes ~1s between frames; callers screening a
