@@ -660,3 +660,10 @@ def test_physically_consistent_keeps_a_frozen_clock_and_an_increment():
     vals = [300, 299, 298, 298, 298, 298, 303, 302]   # frozen, then +5 increment
     rd = [ClockReading(t=float(i), seconds=v) for i, v in enumerate(vals)]
     assert [r.seconds for r in _physically_consistent(rd)] == vals
+
+
+def test_live_move_count_ignores_a_clock_rising_after_the_game():
+    moves = [100, 110, 120, 130, 140, 150, 170, 190, 204, 208, 215]
+    white = _ticking([(t, 300 - min(t, 150) + 100 + (6 if t >= 212 else 0)) for t in range(100, 220)])
+    black = _ticking([(t, 400 - min(t, 206) + 100) for t in range(100, 220)])
+    assert live_move_count(moves, {"white": white, "black": black}) == 9
