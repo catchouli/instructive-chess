@@ -323,8 +323,9 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
                     black, black_conf = cand_black, cand_black_conf
 
         # Same floor for every reading path (see rating_read._ocr_digits).
-        g.rating_white = white if white is not None and white >= 100 else None
-        g.rating_black = black if black is not None and black >= 100 else None
+        white = white if white is not None and white >= 100 else None
+        black = black if black is not None and black >= 100 else None
+        g.rating_white, g.rating_black = rating_read.drop_implausible_pairing(white, black)
 
 
 def main(argv: list[str]) -> int:

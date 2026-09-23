@@ -716,3 +716,16 @@ def read_ratings_beside_clocks(frame_bgr: np.ndarray, board_box, upper_clock, lo
     return RatingReading(top=top[0] if top else None, bottom=bottom[0] if bottom else None,
                          top_confidence=top[1] if top else None,
                          bottom_confidence=bottom[1] if bottom else None)
+
+
+def drop_implausible_pairing(white: int | None, black: int | None) -> tuple[int | None, int | None]:
+    """Rated online games pair players of similar strength: a 3-digit
+    rating facing a 4-digit one 700+ points higher is a partial read, not a
+    pairing (confirmed on real games: 423 vs 1469 with the truth 1412, 261
+    vs 2617 with the truth 2502). Report nothing for it - a missing rating
+    is less harmful than a wrong one."""
+    if white is not None and black is not None:
+        low, high = sorted((white, black))
+        if low < 1000 <= high and high - low >= 700:
+            return (None, black) if white == low else (white, None)
+    return white, black
