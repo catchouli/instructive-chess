@@ -176,7 +176,8 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> Non
         # clock usually went undetected.
 
         for side, readings in clock_readings.items():
-            values = clock_read.clock_at_times(readings, g.move_seconds)
+            movers = [(i % 2 == 0) == (side == "white") for i in range(len(g.move_seconds))]
+            values = clock_read.clock_at_times(readings, clock_read.mover_sample_times(g.move_seconds, movers))
             if side == "white":
                 g.clock_white_seconds = values
             else:
