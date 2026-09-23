@@ -34,6 +34,7 @@ CLOCK_MIN_COVERAGE = 0.5   # a candidate clock region must read at least this
                            # fraction of its window's frames to be trusted
 CLOCK_MAX_CANDIDATES = 4  # candidate regions screened per game; the best-reading two are kept
 CLOCK_SCREEN_FRAMES = 40  # frames each candidate is screened on before a full read
+RATING_BOX_SHIFTS = (-3, 0, 3)  # board-box offsets (scan pixels) each rating frame is read at
 CLOCK_MIN_FRAMES = 20      # a window shorter than this can't bootstrap a
                            # wrap-anchor (see clock_read.py) reliably enough
                            # to be worth attempting at all
@@ -246,9 +247,29 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
         # and if it's allowed to fire on the very first (transient-failure)
         # frame, that high-confidence wrong answer blocks phase 1 from ever
         # reaching a later frame that would have read correctly.
-        _GOOD_ENOUGH = 0.6
-        white = black = None
-        white_conf = black_conf = -1.0
+        # Phase 1 votes rather than keeping the single most confident read:
+        # the band search is sensitive to a few pixels of board-box offset
+        # (confirmed on a real video: at the calibrated box "2122", 6px up
+        # "199"; the other side "2201" / "2241" / nothing), so each frame
+        # is read at small vertical shifts and the value most reads agree on
+        # wins, confidence breaking ties. A read from the row beside a clock
+        # doesn't depend on the board box and counts double. Stops early
+        # once every shift of a frame agrees on both sides.
+        votes = {"white": {}, "black": {}}   # value -> [count, summed confidence]
+
+        def vote(side, value, conf, weight=1):
+            if value is None:
+                return
+            v = votes[side].setdefault(value, [0, 0.0])
+            v[0] += weight
+            v[1] += conf or 0.0
+
+        def leader(side):
+            if not votes[side]:
+                return None, 0
+            value, (count, _) = max(votes[side].items(), key=lambda kv: (kv[1][0], kv[1][1]))
+            return value, count
+
         frames_and_boxes: list[tuple] = []
         for ts in seen:
             frame = download.fetch_hires_frame(src.url, ts)
@@ -258,34 +279,27 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
             scaled_box = (round(box.x * scale), round(box.y * scale),
                           round(box.w * scale), round(box.h * scale))
             frames_and_boxes.append((frame, scaled_box))
-            reading = rating_read.read_ratings(frame, scaled_box, allow_region_fallback=False)
-            if len(g.clock_boxes) == 2:
-                # The row beside each clock outranks the band above/below
-                # the board wherever it reads: on lichess that band holds
-                # nothing useful, or the info panel naming both players.
-                upper, lower = ([round(v * scale) for v in b] for b in g.clock_boxes)
-                beside = rating_read.read_ratings_beside_clocks(frame, scaled_box, upper, lower)
-                reading = rating_read.RatingReading(
-                    top=beside.top if beside.top is not None else reading.top,
-                    bottom=beside.bottom if beside.bottom is not None else reading.bottom,
-                    top_confidence=1.0 + beside.top_confidence if beside.top is not None else reading.top_confidence,
-                    bottom_confidence=(1.0 + beside.bottom_confidence if beside.bottom is not None
-                                       else reading.bottom_confidence))
             # same top/bottom -> white/black convention as
             # clock_read.side_for_box: a broadcast always shows each
             # player's own info on their own side.
-            if g.flipped:
-                cand_white, cand_white_conf = reading.top, reading.top_confidence
-                cand_black, cand_black_conf = reading.bottom, reading.bottom_confidence
-            else:
-                cand_white, cand_white_conf = reading.bottom, reading.bottom_confidence
-                cand_black, cand_black_conf = reading.top, reading.top_confidence
-            if cand_white is not None and cand_white_conf > white_conf:
-                white, white_conf = cand_white, cand_white_conf
-            if cand_black is not None and cand_black_conf > black_conf:
-                black, black_conf = cand_black, cand_black_conf
-            if white_conf >= _GOOD_ENOUGH and black_conf >= _GOOD_ENOUGH:
+            top_side, bottom_side = ("white", "black") if g.flipped else ("black", "white")
+            for dy in RATING_BOX_SHIFTS:
+                shifted = (scaled_box[0], scaled_box[1] + round(dy * scale), scaled_box[2], scaled_box[3])
+                reading = rating_read.read_ratings(frame, shifted, allow_region_fallback=False)
+                vote(top_side, reading.top, reading.top_confidence)
+                vote(bottom_side, reading.bottom, reading.bottom_confidence)
+            if len(g.clock_boxes) == 2:
+                # On lichess the band above/below the board holds nothing
+                # useful, or the info panel naming both players; the row
+                # beside each clock is the real source there.
+                upper, lower = ([round(v * scale) for v in b] for b in g.clock_boxes)
+                beside = rating_read.read_ratings_beside_clocks(frame, scaled_box, upper, lower)
+                vote(top_side, beside.top, beside.top_confidence, weight=2)
+                vote(bottom_side, beside.bottom, beside.bottom_confidence, weight=2)
+            if all(leader(side)[1] >= len(RATING_BOX_SHIFTS) for side in votes):
                 break
+        white, black = leader("white")[0], leader("black")[0]
+        white_conf = black_conf = -1.0
 
         if white is None or black is None:
             for frame, scaled_box in frames_and_boxes:
