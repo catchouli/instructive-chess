@@ -190,3 +190,13 @@ def test_ratings_beside_clocks_ignores_clocks_above_and_below_the_board():
     board = (682, 60, 567, 567)
     reading = rr.read_ratings_beside_clocks(frame, board, (1152, 13, 93, 33), (1148, 675, 96, 32))
     assert reading.top is None and reading.bottom is None
+
+
+def test_rating_in_band_at_1080p_finds_a_slender_closing_paren():
+    # Real 1080p band (99-kJ0FoMiM): file letters, then "ohnomyrosen (1275)".
+    # The ")" is 7px wide beside 11px digits - too wide for the old
+    # width-only bracket test - but 21px tall against the digits' 16-17.
+    fixture = Path(__file__).resolve().parent / "fixtures" / "chesscom_rating_band_1080p_99-kJ0FoMiM.png"
+    band = cv2.imread(str(fixture), cv2.IMREAD_GRAYSCALE)
+    rating, _ = rr._rating_in_band(band, 0, band.shape[0], 0, band.shape[1])
+    assert rating == 1275

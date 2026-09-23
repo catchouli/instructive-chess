@@ -117,9 +117,13 @@ def _is_narrow_bracket(char: tuple[int, int, int, int], median_digit_w: float) -
     """A "(" or ")" renders much narrower than a digit in every font this
     module has been built against (parens ~4-6px vs. digits ~7-18px at the
     resolutions this module works at)."""
-    x0, x1, _, _ = char
-    w = x1 - x0 + 1
-    return w <= 0.6 * median_digit_w
+    x0, x1, y0, y1 = char
+    w, h = x1 - x0 + 1, y1 - y0 + 1
+    # ...or it's slender for its height: a paren also reaches above and
+    # below the digits. Width alone missed a real ")" at 1080p (7px wide
+    # against 11px digits, but 21px tall against their 16-17), losing the
+    # whole rating; a "1" or a signal bar (7x16) stays out.
+    return w <= 0.6 * median_digit_w or w <= 0.4 * h
 
 
 def _paren_shape(mask: np.ndarray, char: tuple[int, int, int, int]) -> str | None:
@@ -559,8 +563,13 @@ def read_ratings(frame_bgr: np.ndarray, board_box, allow_region_fallback: bool =
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     bx, by, bw, bh = board_box.as_tuple() if hasattr(board_box, "as_tuple") else board_box
 
-    top_r = _rating_in_band(gray, by - _BAND_HEIGHT, by - _BAND_PAD, bx, bx + bw + 100)
-    bottom_r = _rating_in_band(gray, by + bh + _BAND_PAD, by + bh + _BAND_HEIGHT, bx, bx + bw + 100)
+    # The band scales with the board: _BAND_HEIGHT was tuned on ~570px
+    # boards, and on a 1080p frame (850px board) a fixed 75px cut the name
+    # row in half above and below the board (confirmed on a real video:
+    # "(1339)" read as 1959, "(1275)" not at all).
+    band = max(_BAND_HEIGHT, round(bh * _BAND_HEIGHT / 570))
+    top_r = _rating_in_band(gray, by - band, by - _BAND_PAD, bx, bx + bw + 100)
+    bottom_r = _rating_in_band(gray, by + bh + _BAND_PAD, by + bh + band, bx, bx + bw + 100)
     top, top_conf = top_r if top_r else (None, None)
     bottom, bottom_conf = bottom_r if bottom_r else (None, None)
     if (top is not None and bottom is not None) or not allow_region_fallback:
