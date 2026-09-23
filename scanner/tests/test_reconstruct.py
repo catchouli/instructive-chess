@@ -271,3 +271,39 @@ def test_multi_ply_gap_is_bridged():
     assert len(games) == 1
     assert games[0].moves_san == RUY_LOPEZ_EXCHANGE
     assert games[0].bridged >= 1
+
+
+def _positions(sans):
+    board = chess.Board()
+    out = [_placement_of(board)]
+    for san in sans:
+        board.push_san(san)
+        out.append(_placement_of(board))
+    return out
+
+
+def test_browsing_back_through_the_move_list_adds_no_moves():
+    # Real pattern (several videos): mid-game the viewer steps back two plies
+    # with the arrow keys, then forward again, then the game goes on. Each
+    # backward step looks like a legal move ("Bc5" undone reads as "Bf8"),
+    # which used to derail the game from there.
+    played = ITALIAN[:8]
+    pos = _positions(ITALIAN)
+    readings = stream_for(played)
+    ts = readings[-1][0] + 1
+    for p in (pos[7], pos[6], pos[7], pos[8]):     # back, back, forward, live again
+        readings += [(ts, p), (ts + 1, p)]
+        ts += 2
+    for p in pos[9:]:                               # the game continues
+        readings += [(ts, p), (ts + 1, p)]
+        ts += 2
+    games = run(readings)
+    assert games[0].moves_san == ITALIAN
+
+
+def test_a_real_repetition_is_still_played():
+    # Knights out and back is a genuine repetition, not browsing: the
+    # position after ply 4 is reached from ply 1 by 3 real plies (odd).
+    shuffle = ["e4", "Nf6", "Nf3", "Ng8", "Ng1", "Nf6", "Nf3", "e6"]
+    games = run(stream_for(shuffle))
+    assert games[0].moves_san == shuffle

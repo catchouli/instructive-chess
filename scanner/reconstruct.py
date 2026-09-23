@@ -405,11 +405,18 @@ def reconstruct(readings: list[tuple[float, str | None]],
     board: chess.Board | None = None
     last_ts = 0.0
 
+    # Placements after each ply of the current game (history[i] = after i
+    # plies), to recognise the viewer browsing back through the move list
+    # mid-game - see the browsing check in the loop below.
+    history: list[str] = []
+    browsing = False
+
     def close():
-        nonlocal current, board
+        nonlocal current, board, history, browsing
         if current and current.ply >= 2:
             games.append(current)
         current, board = None, None
+        history, browsing = [], False
 
     misses = 0
     for kind, ts, placement in events:
@@ -422,6 +429,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
             close()
             current = Game(start_seconds=ts, flipped=(orient == "flipped"))
             board = chess.Board()
+            history = [_placement_of(board)]
             misses = 0
             last_ts = ts
             continue
@@ -437,10 +445,12 @@ def reconstruct(readings: list[tuple[float, str | None]],
                     if seq:
                         current = Game(start_seconds=ts, flipped=flip)
                         board = chess.Board()
+                        history = [_placement_of(board)]
                         for mv in seq:
                             current.moves_san.append(board.san(mv))
                             current.move_seconds.append(ts)
                             board.push(mv)
+                            history.append(_placement_of(board))
                         current.clean += 1
                         misses = 0
                         last_ts = ts
@@ -451,6 +461,23 @@ def reconstruct(readings: list[tuple[float, str | None]],
         cur_placement = _placement_of(board)
         if target == cur_placement:
             misses = 0
+            browsing = False
+            continue
+
+        # The viewer stepping back through the move list mid-game (confirmed
+        # on several real videos) shows earlier positions, and stepping back
+        # is itself a legal-looking move ("Be6" undone reads as "Bc8"), so
+        # the game went wrong from there. Real play can't produce this: the
+        # position before the last ply can't recur after one more ply (the
+        # opponent can't move your piece back), and a position an even
+        # number of plies back needs both players to undo their own moves
+        # within a single reading. An odd number of plies back (3+) *can*
+        # be a real repetition (Nf3 Nf6 Ng1 Ng8...), so that's left to
+        # ordinary processing - unless already browsing.
+        n = len(history) - 1
+        earlier = [k for k in range(n) if history[k] == target]
+        if earlier and (browsing or earlier[-1] == n - 1 or (n - earlier[-1]) % 2 == 0):
+            browsing = True
             continue
 
         # Always search to the full depth on the first (and possibly only) try:
@@ -477,10 +504,12 @@ def reconstruct(readings: list[tuple[float, str | None]],
 
         misses = 0
         last_ts = ts
+        browsing = False
         for mv in moves:
             current.moves_san.append(board.san(mv))
             current.move_seconds.append(ts)
             board.push(mv)
+            history.append(_placement_of(board))
         if len(moves) == 1:
             current.clean += 1
         else:
