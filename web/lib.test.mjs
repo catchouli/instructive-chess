@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   parseQuery, matchesPrefix, replay, toPgn, boardSvg, withTimestamp, fmtTime,
-  gameRating, matchesMinRating,
+  gameRating, matchesMinRating, trustedView,
 } from './lib.js';
 
 let pass = 0;
@@ -111,6 +111,24 @@ t('end-to-end against data/games.json (if present)', () => {
     assert.equal(matchesPrefix(g, sans), true, `${g.id} not matched by its own opening`);
   }
   console.log(`    (${games.length} catalogued game(s) validated)`);
+});
+
+t('trustedView: cuts moves, times and clocks to trusted_ply', () => {
+  const g = { moves_san: ['e4', 'e5', 'Nf3', 'Nc6'], move_seconds: [1, 2, 3, 3],
+    clock_white_seconds: [600, 600, 598, 598], trusted_ply: 2, ply: 4 };
+  const v = trustedView(g);
+  assert.deepEqual(v.moves_san, ['e4', 'e5']);
+  assert.deepEqual(v.move_seconds, [1, 2]);
+  assert.deepEqual(v.clock_white_seconds, [600, 600]);
+  assert.equal(v.clock_black_seconds, undefined);
+  assert.equal(v.ply, 2);
+  assert.equal(g.moves_san.length, 4);   // the data itself is untouched
+});
+
+t('trustedView: nothing trusted hides the game; no field shows it all', () => {
+  assert.equal(trustedView({ moves_san: ['e4'], trusted_ply: 0 }), null);
+  const old = { moves_san: ['e4', 'e5'] };
+  assert.equal(trustedView(old), old);
 });
 
 console.log(`\n${pass} tests passed`);

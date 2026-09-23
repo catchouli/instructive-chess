@@ -1,6 +1,6 @@
 import {
   parseQuery, matchesPrefix, replay, moveLabel, toPgn, boardSvg,
-  withTimestamp, fmtTime, gameRating, matchesMinRating,
+  withTimestamp, fmtTime, gameRating, matchesMinRating, trustedView,
 } from './lib.js';
 
 const DEFAULT_LIMIT = 20;   // games shown when the search box is empty
@@ -21,7 +21,8 @@ init();
 async function init() {
   try {
     const res = await fetch('data/games.json', { cache: 'no-cache' });
-    GAMES = await res.json();
+    // only the part of each game the scanner is sure of (see trustedView)
+    GAMES = (await res.json()).map(trustedView).filter(Boolean);
   } catch {
     GAMES = [];
   }
