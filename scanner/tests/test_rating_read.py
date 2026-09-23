@@ -200,3 +200,13 @@ def test_rating_in_band_at_1080p_finds_a_slender_closing_paren():
     band = cv2.imread(str(fixture), cv2.IMREAD_GRAYSCALE)
     rating, _ = rr._rating_in_band(band, 0, band.shape[0], 0, band.shape[1])
     assert rating == 1275
+
+
+def test_drop_implausible_pairing():
+    # Real partial reads: a 3-digit value facing a 4-digit one 700+ higher.
+    assert rr.drop_implausible_pairing(423, 1469) == (None, 1469)
+    assert rr.drop_implausible_pairing(2946, 261) == (2946, None)
+    # Plausible pairings, both-low pairs and missing sides are left alone.
+    assert rr.drop_implausible_pairing(2400, 2950) == (2400, 2950)
+    assert rr.drop_implausible_pairing(425, 497) == (425, 497)
+    assert rr.drop_implausible_pairing(None, 261) == (None, 261)
