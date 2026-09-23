@@ -186,9 +186,23 @@ def find_clock_regions(frames: list[np.ndarray], board_box, max_regions: int = 2
                 found = (px0, py0, px1, py1, ref)
                 break
         if found is None:
+            # Segmentation can miss a real clock whose idle state is dark text
+            # on a light box with the box's edge in the crop (confirmed on a
+            # real video: the top of two stacked clocks was never found, so
+            # the lone bottom one was given to the wrong player). Reading it
+            # as a time is the more direct test - but only on a few frames,
+            # since OCR is the slow part.
+            px0, py0 = max(0, x - pad), max(0, y - pad)
+            px1, py1 = min(w_img, x + w + pad), min(h_img, y + h + pad)
+            for ref in refs[:3]:
+                if _ocr_seconds(ref[py0:py1, px0:px1]) is not None:
+                    found = (px0, py0, px1, py1, ref)
+                    break
+        if found is None:
             continue
         px0, py0, px1, py1, ref = found
         px0, px1 = _grow_along_text_line(ref, px0, py0, px1, py1)
+        py0, py1 = _grow_to_text_height(ref, px0, py0, px1, py1)
         # A left-widened pad can reach back over the board's edge beside a
         # clock panel (confirmed on a real lichess video: the crop took in a
         # strip of board and the clock OCR'd in under half its frames).
@@ -247,6 +261,34 @@ def _grow_along_text_line(gray: np.ndarray, x0: int, y0: int, x1: int, y1: int,
     new_x0 = walk(x0 - 1, -1, -1) if x0 > 0 else x0
     new_x1 = walk(x1, w, 1) + 1 if x1 < w else x1
     return min(x0, new_x0), max(x1, new_x1)
+
+
+def _grow_to_text_height(gray: np.ndarray, x0: int, y0: int, x1: int, y1: int,
+                         thresh: int = 40) -> tuple[int, int]:
+    """Extend a clock box up/down over rows that still hold its text. The
+    board is masked out of the clock search with a margin, and a clock
+    sitting just outside that margin loses its top or bottom rows to it
+    (confirmed on a real video: a clock 2px below the board clipped to
+    23px of ~27, and OCR'd in under half its frames). Stops at an empty
+    row or a row inked across the whole box (a border)."""
+    h_img = gray.shape[0]
+    crop = gray[y0:y1, x0:x1]
+    if crop.size == 0:
+        return y0, y1
+    bg = float(np.median(crop))
+    limit = max(2, (y1 - y0) // 2)
+
+    def row_has_text(y: int) -> bool:
+        frac = (np.abs(gray[y, x0:x1].astype(np.int16) - bg) > thresh).mean()
+        return 0 < frac < 0.8
+
+    top = y0
+    while top > 0 and y0 - top < limit and row_has_text(top - 1):
+        top -= 1
+    bot = y1
+    while bot < h_img and bot - y1 < limit and row_has_text(bot):
+        bot += 1
+    return top, bot
 
 
 def _tight_ink_bbox(gray: np.ndarray, margin: int = 4, thresh: int = 40):
@@ -942,6 +984,22 @@ def _widget_interior_for_ocr(big: np.ndarray, delta: int = 40) -> np.ndarray | N
     return _clean_for_ocr(big[y0:y1, x0:x1])
 
 
+def _ocr_seconds(crop: np.ndarray) -> float | None:
+    """One clock crop -> seconds, or None: the plain upscaled crop first,
+    then the edge-cleaned and widget-interior fallbacks (see each)."""
+    if crop.size == 0:
+        return None
+    big = cv2.resize(crop, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC)
+    seconds = _parse_clock_text(_tesseract_line(big))
+    if seconds is None:
+        seconds = _parse_clock_text(_tesseract_line(_clean_for_ocr(big)))
+    if seconds is None:
+        inner = _widget_interior_for_ocr(big)
+        if inner is not None:
+            seconds = _parse_clock_text(_tesseract_line(inner))
+    return seconds
+
+
 def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
                    reject_outliers: bool = True) -> list[ClockReading]:
     """Read a single clock's value directly from each frame via Tesseract -
@@ -978,16 +1036,7 @@ def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
             readings.append(ClockReading(t=t, seconds=prev_seconds))
             continue
         prev_crop = crop.astype(np.int16)
-        seconds = None
-        if crop.size > 0:
-            big = cv2.resize(crop, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC)
-            seconds = _parse_clock_text(_tesseract_line(big))
-            if seconds is None:
-                seconds = _parse_clock_text(_tesseract_line(_clean_for_ocr(big)))
-            if seconds is None:
-                inner = _widget_interior_for_ocr(big)
-                if inner is not None:
-                    seconds = _parse_clock_text(_tesseract_line(inner))
+        seconds = _ocr_seconds(crop)
         prev_seconds = seconds
         readings.append(ClockReading(t=t, seconds=seconds))
     # The outlier pass assumes ~1s between frames; callers screening a
