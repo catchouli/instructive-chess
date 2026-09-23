@@ -52,6 +52,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--calibrate", action="store_true", help="write an annotated frame and exit")
     p.add_argument("--min-confidence", type=float, default=0.6,
                    help="drop games below this reconstruction confidence (default 0.6)")
+    p.add_argument("--min-ply", type=int, default=10,
+                   help="drop games shorter than this (default 10) - measured against real games, "
+                        "every catalogued 'game' under 6 plies was a junk fragment (an intro or recap "
+                        "position), while the shortest real game was 15 plies")
     p.add_argument("--dry-run", action="store_true", help="print games, do not write games.json")
     p.add_argument("--catalog", type=Path, default=catalog.DATA_FILE,
                    help="catalog file to write (default web/data/games.json) - point experiments "
@@ -383,9 +387,9 @@ def main(argv: list[str]) -> int:
     print("[4/6] reconstructing games")
     readings = recognize.vote_stream(readings)
     games = reconstruct.reconstruct(readings)
-    kept = [g for g in games if g.confidence >= args.min_confidence and g.ply >= 2]
+    kept = [g for g in games if g.confidence >= args.min_confidence and g.ply >= args.min_ply]
     print(f"      {len(games)} games found, {len(kept)} kept "
-          f"(confidence >= {args.min_confidence})")
+          f"(confidence >= {args.min_confidence}, >= {args.min_ply} plies)")
 
     if args.no_clocks:
         print("[5/6] reading clocks - skipped (--no-clocks)")
