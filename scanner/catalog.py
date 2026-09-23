@@ -32,7 +32,9 @@ def _entry(source: Source, game: Game, index: int) -> dict:
         "published": source.published,
         "start_seconds": int(round(game.start_seconds)),
         "moves_san": list(game.moves_san),
-        "move_seconds": [int(round(t)) for t in game.move_seconds],
+        # one decimal, not whole seconds: at 2 fps two moves 0.5s apart
+        # would otherwise share a time and look confirmed together (see trust.py)
+        "move_seconds": [round(t, 1) for t in game.move_seconds],
         "pgn": game.pgn(),
         "ply": game.ply,
         "confidence": round(game.confidence, 3),
