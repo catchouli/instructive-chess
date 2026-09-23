@@ -1483,9 +1483,12 @@ def live_move_count(move_times: list[float], readings_by_side: dict[str, list[Cl
         return n
 
     def runs_after(t: float) -> bool:
+        # A running clock goes *down*: a rise after the game is over (a new
+        # game's clock appearing, a results screen - confirmed on a real
+        # video, 433 -> 439 after the last move) must not count.
         for readings in readings_by_side.values():
             vals = [r.seconds for r in readings if r.seconds is not None and r.t >= t + 1.0]
-            if vals and max(vals) - min(vals) >= 1:
+            if any(b <= a - 1 for a, b in zip(vals, vals[1:])):
                 return True
         return False
 
