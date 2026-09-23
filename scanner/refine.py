@@ -24,9 +24,7 @@ import chess
 import recognize
 import reconstruct
 
-DENSE_FPS = 6          # frames per second inside a bunch's window (15 was tried as a
-                       # second pass for unsplit bunches: no gain - what's left is mostly
-                       # premoves, whose in-between position is never drawn at all)
+DENSE_FPS = 6          # frames per second inside a bunch's window
 MIN_BUNCH = 2          # plies confirmed together that are worth re-reading
 STABLE_FRAMES = 2      # a dense placement must repeat this often to count
 WINDOW_PAD = 3.0       # seconds either side of a bunch to re-read: its 1 fps time comes
@@ -45,40 +43,37 @@ def _bunches(move_seconds: list[float]) -> list[tuple[int, int]]:
     return out
 
 
-def split_bunch(before: str, path_placements: list[str], dense: list[tuple[float, str]],
+def split_bunch(path_placements: list[str], dense: list[tuple[float, str]],
                 t_end: float) -> list[float] | None:
     """When each position along a bunch's known path was first seen in the
     dense frames - its moves stay exactly as reconstructed; only their
-    times are refined.
-
-    Positions are compared only on the squares the bunch's moves change
-    (`before` is the position before it), and must match there *exactly*
-    for STABLE_FRAMES consecutive dense frames, in path order. A dense
-    frame has no flicker vote, so a misread square elsewhere on the board
-    is common - and irrelevant to these moves (confirmed on a real video:
-    one persistent misread off the moves' squares hid every split); a
-    wrong piece on a square the moves *do* touch (a real misread: Ra7 for
-    Qa7) is exactly what must not confirm a move. None unless every ply
+    times are refined. A position counts as seen when STABLE_FRAMES
+    consecutive dense frames are within one square of it (a single dense
+    frame has no flicker vote, so one misread square is common), at least
+    one of them exactly, each closer to it than to any other position on
+    the path; positions must appear in path order. None unless every ply
     was seen on its own (see the all-or-nothing note below)."""
-    positions = [before] + path_placements
-    squares = [i for i in range(len(before)) if len({p[i] for p in positions}) > 1]
-    keys = [tuple(q[i] for i in squares) for q in path_placements]
     k_seen: dict[int, float] = {}
-    run_k, run_start, run_n = None, None, 0
+    run_k, run_start, run_n, run_exact = None, None, 0, False
     last_k = -1
     for t, p in dense + [(None, None)]:
-        k = None
+        k, exact = None, False
         if p is not None:
-            key = tuple(p[i] for i in squares)
-            if key in keys:
-                k = keys.index(key)
+            dists = [reconstruct._hamming(p, q) for q in path_placements]
+            best = min(dists)
+            if best <= 1 and dists.count(best) == 1:
+                k, exact = dists.index(best), best == 0
         if k == run_k and k is not None:
             run_n += 1
+            run_exact = run_exact or exact
             continue
-        if run_k is not None and run_n >= STABLE_FRAMES and run_k > last_k:
+        # ...and at least one frame of the run must match exactly: one square
+        # off is also what a wrong piece on the right square looks like
+        # (a real misread: Ra7 for Qa7), which must not confirm a wrong move
+        if run_k is not None and run_n >= STABLE_FRAMES and run_exact and run_k > last_k:
             k_seen[run_k] = run_start
             last_k = run_k
-        run_k, run_start, run_n = k, t, 1
+        run_k, run_start, run_n, run_exact = k, t, 1, exact
     times: list[float] = []
     nxt = t_end
     for k in range(len(path_placements) - 1, -1, -1):
@@ -104,7 +99,6 @@ def refine_game(path: Path, box, model, game: reconstruct.Game, iter_frames) -> 
         board = chess.Board()
         for san in game.moves_san[:start]:
             board.push_san(san)
-        before = reconstruct._placement_of(board)
         path_placements = []
         for san in game.moves_san[start:start + size]:
             board.push_san(san)
@@ -115,7 +109,7 @@ def refine_game(path: Path, box, model, game: reconstruct.Game, iter_frames) -> 
             rd = recognize.read_board(frame, box, model)
             if rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34:
                 dense.append((ts, rd.placement[::-1] if game.flipped else rd.placement))
-        times = split_bunch(before, path_placements, dense, t_end)
+        times = split_bunch(path_placements, dense, t_end)
         if times is None:
             continue
         # strictly after the previous ply (or the split would merge into its
