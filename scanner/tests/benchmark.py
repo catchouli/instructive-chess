@@ -351,7 +351,10 @@ def match(game: dict, cands: list[dict]) -> tuple[dict | None, str]:
 def score(game: dict, real: dict) -> dict:
     moves = game["moves_san"]
     prefix = _prefix(moves, real["moves_san"])
+    trusted = game.get("trusted_ply", len(moves))
     res = {
+        "trusted_ply": trusted,
+        "trusted_ok": prefix >= trusted,
         "moves_correct": prefix,
         "ply": len(moves),
         "real_ply": len(real["moves_san"]),
@@ -470,6 +473,15 @@ def print_report(result: dict, show_all: bool) -> None:
         if sub:
             print(f"  -- {platform} only ({len(sub)} games)")
             _summary(sub, indent="     ")
+
+    tp = sum(r["trusted_ply"] for r in m)
+    print("\nTrusted moves (what the web app shows - see scanner/trust.py):")
+    print(f"  games with a wrong trusted move   {_pct(sum(not r['trusted_ok'] for r in m), len(m))}")
+    print(f"  trusted plies that are wrong      "
+          f"{_pct(sum(max(0, r['trusted_ply'] - r['moves_correct']) for r in m), tp)}")
+    print(f"  plies trusted, of those recorded  {_pct(tp, sum(r['ply'] for r in m))}")
+    print(f"  whole 15-move opening trusted     "
+          f"{_pct(sum(r['trusted_ply'] >= min(30, r['real_ply']) for r in m), len(m))}")
 
     tot = sum(r["ply"] for r in m)
     ck = sum(r["clock"]["checked"] for r in m)
