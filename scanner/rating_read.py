@@ -57,8 +57,8 @@ _MIN_AVG_CONFIDENCE = 0.35   # sanity floor (0-1, Tesseract's own 0-100
                              # and every candidate is some flavor of bad
 
 
-def _ocr_digits(crop: np.ndarray, x0: int, y0: int, x1: int, y1: int
-                 ) -> tuple[int, float] | None:
+def _ocr_digits(crop: np.ndarray, x0: int, y0: int, x1: int, y1: int,
+                expect_digits: int | None = None) -> tuple[int, float] | None:
     """OCR the digit span between a candidate "(" and ")", using the
     *original grayscale* pixels (not the thresholded/binary mask) - tried
     both head-to-head on every hard case gathered while this module still
@@ -108,9 +108,12 @@ def _ocr_digits(crop: np.ndarray, x0: int, y0: int, x1: int, y1: int
         if len(digits) == 4 and digits[0] not in ("1", "2", "3"):
             continue
         confidence = (max(confs) / 100.0) if confs else 0.0
-        if best is None or confidence > best[1]:
-            best = (int(digits), confidence)
-    return best
+        # With an expected length (see _digits_between), a read of that
+        # length beats any other, whatever the confidence.
+        key = (expect_digits is None or len(digits) == expect_digits, confidence)
+        if best is None or key > best[2]:
+            best = (int(digits), confidence, key)
+    return best[:2] if best else None
 
 
 def _is_narrow_bracket(char: tuple[int, int, int, int], median_digit_w: float) -> bool:
@@ -518,7 +521,14 @@ def _digits_between(crop: np.ndarray, chars: list[tuple[int, int, int, int]],
     x1 = max(c[1] for c in inside)
     y0 = min(c[2] for c in inside)
     y1 = max(c[3] for c in inside)
-    return _ocr_digits(crop, x0, y0, x1, y1)
+    # Four separate glyphs between the parens are four digits, whatever
+    # Tesseract makes of them - it can drop one ("(2742)" read as 742).
+    # Fewer glyphs can still be four digits touching each other, so no
+    # expectation then. (Span width isn't a safe proxy: digit aspect varies
+    # by font, and a too-eager 4 lets a "(" misread as "1" win: 150 ->
+    # 1150.)
+    expect = 4 if len(inside) == 4 else None
+    return _ocr_digits(crop, x0, y0, x1, y1, expect_digits=expect)
 
 
 @dataclass
