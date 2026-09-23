@@ -31,10 +31,12 @@ def test_positions_seen_in_order_time_each_ply():
     assert refine.split_bunch(path, dense, 12.0) == [10.0, 10.5, 11.0]
 
 
-def test_an_unseen_position_stays_with_the_next_seen_one():
+def test_a_partial_split_is_no_split():
+    # Real case: a 4-ply bunch split 1+1+2 left a trusted pair holding the
+    # wrong move - a bunch is split fully or not at all.
     path = _path("Nf3", "Nc6", "Bc4")
     dense = [(10.5, path[1]), (10.7, path[1]), (11.0, path[2]), (11.2, path[2])]
-    assert refine.split_bunch(path, dense, 12.0) == [10.5, 10.5, 11.0]
+    assert refine.split_bunch(path, dense, 12.0) is None
 
 
 def test_nothing_seen_apart_is_no_split():
