@@ -30,8 +30,10 @@ import rating_read           # noqa: E402
 import recognize             # noqa: E402
 import reconstruct           # noqa: E402
 
-CLOCK_MIN_COVERAGE = 0.5   # a candidate clock region must read at least this
-                           # fraction of its window's frames to be trusted
+CLOCK_MIN_COVERAGE = 0.35  # a candidate clock region must read at least this
+                           # fraction of its window's frames to be trusted - an
+                           # idle clock reads poorly in some skins, and misreads
+                           # are blanked by clock_read._physically_consistent
 CLOCK_MAX_CANDIDATES = 4  # candidate regions screened per game; the best-reading two are kept
 CLOCK_SCREEN_FRAMES = 40  # frames each candidate is screened on before a full read
 RATING_BOX_SHIFTS = (-3, 0, 3)  # board-box offsets (scan pixels) each rating frame is read at
