@@ -29,6 +29,7 @@ import download              # noqa: E402
 import rating_read           # noqa: E402
 import recognize             # noqa: E402
 import reconstruct           # noqa: E402
+import refine                # noqa: E402
 
 CLOCK_MIN_COVERAGE = 0.35  # a candidate clock region must read at least this
                            # fraction of its window's frames to be trusted - an
@@ -65,6 +66,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--catalog", type=Path, default=catalog.DATA_FILE,
                    help="catalog file to write (default web/data/games.json) - point experiments "
                         "at a scratch copy, then score it with tests/benchmark.py --catalog")
+    p.add_argument("--no-refine", action="store_true",
+                   help="skip re-reading fast-move moments at a higher frame rate (see refine.py)")
     p.add_argument("--no-clocks", action="store_true", help="skip reading on-screen clocks")
     p.add_argument("--no-ratings", action="store_true", help="skip reading player ratings")
     return p.parse_args(argv)
@@ -395,6 +398,9 @@ def main(argv: list[str]) -> int:
     readings = recognize.vote_stream(readings)
     games = reconstruct.reconstruct(readings)
     kept = [g for g in games if g.confidence >= args.min_confidence and g.ply >= args.min_ply]
+    if not args.no_refine:
+        split = sum(refine.refine_game(src.path, box, model, g, iter_frames) for g in kept)
+        print(f"      re-read fast-move moments at {refine.DENSE_FPS} fps: {split} plies seen on their own")
     print(f"      {len(games)} games found, {len(kept)} kept "
           f"(confidence >= {args.min_confidence}, >= {args.min_ply} plies)")
 
