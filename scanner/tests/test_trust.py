@@ -14,10 +14,10 @@ def test_moves_seen_one_at_a_time_are_trusted_but_the_last_two():
     assert conf[0] == trust.CONF_SINGLE and conf[-1] == trust.CONF_TAIL
 
 
-def test_trust_ends_one_ply_before_a_big_bunch():
+def test_trust_ends_before_a_big_bunch():
     times = [1, 2, 3, 4, 5, 6, 7, 7, 7, 10, 11, 12]     # plies 7-9 seen at once
     conf, trusted = trust.assess(MOVES, times)
-    assert trusted == 5
+    assert trusted == 6 - trust.TRIGGER_MARGIN
     assert conf[6:9] == [trust.CONF_BUNCH_BIG] * 3
 
 
