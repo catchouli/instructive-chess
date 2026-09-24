@@ -22,10 +22,10 @@ ones have already failed for non-obvious reasons. Add to it as you go.
 
 ## Current state (2026-09-24)
 
-Live catalog, 119 games matched to real games: **0 wrong trusted moves**
-(of 4,195 trusted plies), 73% of recorded plies trusted, full 15-move
-opening trusted in 75 games, every move right in 67%, clocks right in 88%,
-both ratings right in 74%. (On 2026-09-22: 41 games had a wrong move shown,
+Live catalog (2026-09-25), 136 of 141 games matched to real games: **0 wrong
+trusted moves** (of 4,630 trusted plies), 68% of recorded plies trusted, full
+15-move opening trusted in 73 games, every move right in 67% (91 games),
+clocks right in 89%, both ratings right in 74%. (On 2026-09-22: 41 games had a wrong move shown,
 clocks 13%, ratings 52%.)
 
 ## Moves
@@ -48,13 +48,14 @@ clocks 13%, ratings 52%.)
 | Board-box tracking (re-align when confidence drops) | Thrashed (60 re-aligns on one video), lost a game. The board hadn't moved | **No** |
 | Re-read a poorly matching occupied square at small offsets (±4 px) | A bishop read as empty matched at 0.83 instead of 0.14. On 3 videos: KfuyDm5uksI 3 → 9 games found, lAniuIChYuA-1 all 96 plies right (was 83/88), trusted plies 168 → 375, still 0 wrong | Committed (`7905b60`), see next rows |
 | ...on the whole library (loose: any shift, match ≥ 0.42) | 123 → 137 games found, +340 plies captured, but **6 games got wrong trusted moves**: an empty square's edge sliver of a neighbouring piece, shifted towards it, matched a template (phantom pieces) | **No** as-is |
-| ...strict: shifted piece must be centred in the crop and match ≥ 0.7 | On the 6 affected videos + 2 that gained: 0 wrong trusted (loose: 6 games), matched games 21 → 25, every move right 15 → 16, trusted plies 774 → 869 | Yes; full rescan pending |
+| ...strict: shifted piece must be centred in the crop and match ≥ 0.7 | On the 6 affected videos + 2 that gained: 0 wrong trusted (loose: 6 games), matched games 21 → 25. Full library: matched 119 → 136, every move right 80 → 91 games, but 3 games with 5 wrong trusted plies under the old trust rule - see trust table | Yes (`2c11d70`) |
 
 ## Trusted moves (`trust.py`)
 
-Rule: stop one ply before a bunch of 3+ plies (or any bunch past ply 30),
-and hold back the last 2 plies (4 past ply 30) unless a clock-verified mate.
-Tuned on the 119 benchmarked games, so expect a small error rate on new ones.
+Rule: stop two plies before a bunch of 3+ plies (or any bunch past ply 26),
+and hold back the last 2 plies (4 past ply 26) unless a clock-verified mate.
+Tuned on the 136 benchmarked games, so expect a small error rate on new ones,
+and recalibrate as the library grows (it needed it once already).
 
 | Idea | Result | Kept? |
 |---|---|---|
@@ -62,6 +63,7 @@ Tuned on the 119 benchmarked games, so expect a small error rate on new ones.
 | Hold back fewer end plies when both clocks were read | +17 full openings but 5 wrong last plies came back | **No** |
 | Stop where the mover's clock *rose* | Fires on increment games (600+8) too; cost 6 openings, caught 1 error | **No** |
 | Flag moves after which the mover's clock kept running | Flagged 19 all-correct games, caught 13 of 38 errors | **No** |
+| Recalibrate on 136 games (after recognition fixes found more): trust 2-ply bunches only before ply 26 (was 30), cut 2 plies before a trigger bunch (was 1) | Old rule left 3 games wrong (two wrong early pairs, one misread 2 plies before a bunch); new: 0 wrong of 4,630 trusted plies, full openings 73/136 | Yes |
 
 ## Clocks
 

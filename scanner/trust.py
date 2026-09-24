@@ -16,18 +16,22 @@ were inferred rather than each seen, and that's where games go wrong:
   (first wrong moves seen on their own: 19, among ~4,800 such plies)
 
 and a misread move is often what causes the jumble that follows, so trust
-ends one ply *before* such a bunch. A game's last couple of moves are risky
+ends a ply or two *before* such a bunch. A game's last couple of moves are risky
 too (a result screen or post-game analysis creeping in), unless the game
-ends in mate. On the 119 benchmarked games (2026-09-23) this left 0 games
-with a wrong trusted move (41 had some wrong move), trusting 60% of plies
-and the whole 15-move opening in 96.
+ends in mate. Recalibrated 2026-09-25 on 136 benchmarked games (more found
+after recognition fixes): late-bunch threshold 30 -> 26 and a 2-ply margin
+before a trigger bunch, for 0 games with a wrong trusted move (the old
+settings left 3: two wrong early pairs, one misread two plies before a
+bunch), trusting 68% of plies. Tuned on the games it's measured on - expect
+a small error rate on new ones, and recheck as the library grows.
 """
 from __future__ import annotations
 
 import chess
 
 BIG_BUNCH = 3          # plies confirmed in one reading that end trust
-LATE_PLY = 30          # past here, any bunch (2+) ends trust
+LATE_PLY = 26          # past here, any bunch (2+) ends trust
+TRIGGER_MARGIN = 2     # trust ends this many plies before such a bunch
 TAIL_PLIES = 2         # always hold back this many final plies (unless mate)
 LATE_TAIL_PLIES = 4    # ...and this many, past LATE_PLY
 
@@ -80,7 +84,7 @@ def assess(moves_san: list[str], move_seconds: list[float],
         else:
             conf.append(CONF_SINGLE)
         if trusted == n and i == start and (size >= BIG_BUNCH or (size >= 2 and start >= LATE_PLY)):
-            trusted = max(0, start - 1)
+            trusted = max(0, start - TRIGGER_MARGIN)
     if not (clocks_checked_end and _ends_the_game(moves_san)):
         tail_start = min(n - TAIL_PLIES, max(min(LATE_PLY, n - TAIL_PLIES), n - LATE_TAIL_PLIES))
         for i in range(max(0, tail_start), n):
