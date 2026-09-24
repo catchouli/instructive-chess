@@ -314,6 +314,8 @@ def _hamming_str(a: str, b: str) -> int:
     return sum(1 for x, y in zip(a, b) if x != y)
 
 
+_SHIFT_MIN_SIM = 0.7      # a shifted re-match must be strong (the real case: 0.83)...
+_SHIFT_CENTRE_TOL = 0.12  # ...with the piece centred in the shifted crop
 _SHIFTS = [(dx, dy) for dx in (-4, -2, 0, 2, 4) for dy in (-4, -2, 0, 2, 4) if (dx, dy) != (0, 0)]
 
 
@@ -335,6 +337,14 @@ def _shifted_match(frame_bgr: np.ndarray, box, r: int, c: int, model: "BoardMode
         patch = _patch(cell)
         mask, frac = _piece_mask(patch)
         if frac < _MIN_PIECE_FRAC:
+            continue
+        # The piece must sit centred in the shifted crop: a neighbour's
+        # sliver at the cell edge, pulled further in by the shift, can also
+        # match a template - on the full library that invented pieces and
+        # 6 games got wrong trusted moves.
+        ys, xs = np.nonzero(mask)
+        if (abs(xs.mean() - _PATCH / 2) > _SHIFT_CENTRE_TOL * _PATCH
+                or abs(ys.mean() - _PATCH / 2) > _SHIFT_CENTRE_TOL * _PATCH):
             continue
         sims = _zncc_many(patch, model.temps, np.maximum(model.masks, mask[None]))
         k = int(np.argmax(sims))
@@ -376,7 +386,7 @@ def read_board(frame_bgr: np.ndarray, box, model: BoardModel) -> Reading:
             # the whole board made every other square worse). Retry this one
             # square slightly shifted before giving up on it.
             k, best = _shifted_match(frame_bgr, box, r, c, model)
-            if best >= model.match_thresh:
+            if best >= max(model.match_thresh, _SHIFT_MIN_SIM):
                 chars.append(model.piece_of[k])
                 scores.append(best)
                 continue
