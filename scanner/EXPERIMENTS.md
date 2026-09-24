@@ -46,7 +46,7 @@ clocks 13%, ratings 52%.)
 | ...second pass at 15 fps for unsplit bunches | No change. What's left is premoves, whose in-between position is never drawn | **No** |
 | ...compare only the squares the moves change, exactly | +20 trusted plies on 3 videos, −62 on the whole library | **No** (`3f4c9ae`) |
 | Board-box tracking (re-align when confidence drops) | Thrashed (60 re-aligns on one video), lost a game. The board hadn't moved | **No** |
-| Re-read a poorly matching occupied square at small offsets (±4 px) | Fixes a bishop read as empty (sim 0.14 → 0.83) | Testing |
+| Re-read a poorly matching occupied square at small offsets (±4 px) | A bishop read as empty matched at 0.83 instead of 0.14. On 3 videos: KfuyDm5uksI 3 → 9 games found, lAniuIChYuA-1 all 96 plies right (was 83/88), trusted plies 168 → 375, still 0 wrong | Yes (see git log) |
 
 ## Trusted moves (`trust.py`)
 

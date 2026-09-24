@@ -314,6 +314,35 @@ def _hamming_str(a: str, b: str) -> int:
     return sum(1 for x, y in zip(a, b) if x != y)
 
 
+_SHIFTS = [(dx, dy) for dx in (-4, -2, 0, 2, 4) for dy in (-4, -2, 0, 2, 4) if (dx, dy) != (0, 0)]
+
+
+def _shifted_match(frame_bgr: np.ndarray, box, r: int, c: int, model: "BoardModel") -> tuple[int, float]:
+    """(template index, similarity) for square (r, c) re-cropped at small
+    offsets - the best over all of them."""
+    x, y, w, h = box.as_tuple() if hasattr(box, "as_tuple") else box
+    xe, ye = np.linspace(x, x + w, 9), np.linspace(y, y + h, 9)
+    ix, iy = (w / 8) * _INSET, (h / 8) * _INSET
+    y0, y1 = int(ye[r] + iy), int(ye[r + 1] - iy)
+    x0, x1 = int(xe[c] + ix), int(xe[c + 1] - ix)
+    best_k, best = 0, -1.0
+    for dx, dy in _SHIFTS:
+        if y0 + dy < 0 or x0 + dx < 0:
+            continue
+        cell = frame_bgr[y0 + dy:y1 + dy, x0 + dx:x1 + dx]
+        if cell.size == 0:
+            continue
+        patch = _patch(cell)
+        mask, frac = _piece_mask(patch)
+        if frac < _MIN_PIECE_FRAC:
+            continue
+        sims = _zncc_many(patch, model.temps, np.maximum(model.masks, mask[None]))
+        k = int(np.argmax(sims))
+        if sims[k] > best:
+            best_k, best = k, float(sims[k])
+    return best_k, best
+
+
 def read_board(frame_bgr: np.ndarray, box, model: BoardModel) -> Reading:
     chars: list[str] = []
     scores: list[float] = []
@@ -340,6 +369,17 @@ def read_board(frame_bgr: np.ndarray, box, model: BoardModel) -> Reading:
         eff = np.maximum(model.masks, mask[None])
         sims = _zncc_many(patch, model.temps, eff)
         k = int(np.argmax(sims))
+        if sims[k] < model.match_thresh:
+            # A clear piece blob that matches nothing may just sit a few pixels
+            # off the grid (confirmed on a real video: a bishop read as empty
+            # at sim 0.14 matched at 0.83 three pixels higher, while shifting
+            # the whole board made every other square worse). Retry this one
+            # square slightly shifted before giving up on it.
+            k, best = _shifted_match(frame_bgr, box, r, c, model)
+            if best >= model.match_thresh:
+                chars.append(model.piece_of[k])
+                scores.append(best)
+                continue
         if sims[k] < model.match_thresh:
             # a real, sizeable blob (frac test above passed) that doesn't
             # confidently match any template - e.g. a piece the mouse cursor
