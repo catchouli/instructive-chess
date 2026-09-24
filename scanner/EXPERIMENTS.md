@@ -46,7 +46,9 @@ clocks 13%, ratings 52%.)
 | ...second pass at 15 fps for unsplit bunches | No change. What's left is premoves, whose in-between position is never drawn | **No** |
 | ...compare only the squares the moves change, exactly | +20 trusted plies on 3 videos, −62 on the whole library | **No** (`3f4c9ae`) |
 | Board-box tracking (re-align when confidence drops) | Thrashed (60 re-aligns on one video), lost a game. The board hadn't moved | **No** |
-| Re-read a poorly matching occupied square at small offsets (±4 px) | A bishop read as empty matched at 0.83 instead of 0.14. On 3 videos: KfuyDm5uksI 3 → 9 games found, lAniuIChYuA-1 all 96 plies right (was 83/88), trusted plies 168 → 375, still 0 wrong | Yes (see git log) |
+| Re-read a poorly matching occupied square at small offsets (±4 px) | A bishop read as empty matched at 0.83 instead of 0.14. On 3 videos: KfuyDm5uksI 3 → 9 games found, lAniuIChYuA-1 all 96 plies right (was 83/88), trusted plies 168 → 375, still 0 wrong | Committed (`7905b60`), see next rows |
+| ...on the whole library (loose: any shift, match ≥ 0.42) | 123 → 137 games found, +340 plies captured, but **6 games got wrong trusted moves**: an empty square's edge sliver of a neighbouring piece, shifted towards it, matched a template (phantom pieces) | **No** as-is |
+| ...strict: shifted piece must be centred in the crop and match ≥ 0.7 | On the 6 affected videos + 2 that gained: 0 wrong trusted (loose: 6 games), matched games 21 → 25, every move right 15 → 16, trusted plies 774 → 869 | Yes; full rescan pending |
 
 ## Trusted moves (`trust.py`)
 
