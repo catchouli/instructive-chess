@@ -1,5 +1,13 @@
 # Instructive Chess
 
+**Live site: https://catchouli.github.io/instructive-chess/**
+
+<p>
+  <a href="screenshots/home.png"><img src="screenshots/thumbs/home.png" width="32%" alt="Catalog of recent games"></a>
+  <a href="screenshots/search.png"><img src="screenshots/thumbs/search.png" width="32%" alt="Searching by opening moves"></a>
+  <a href="screenshots/game.png"><img src="screenshots/thumbs/game.png" width="32%" alt="Stepping through a game"></a>
+</p>
+
 A catalog of **instructive chess games** — games played on YouTube by masters who narrate
 every move — that you can search by the moves played.
 
