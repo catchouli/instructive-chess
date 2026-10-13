@@ -89,6 +89,9 @@ def _video_path(video_id: str) -> Path | None:
     return matches[0] if matches else None
 
 
+@pytest.mark.skip(reason="exercises the legacy self-calibrating clock_read.read_clock, which scan.py no "
+                         "longer uses (replaced by read_clock_ocr - see test_clock_read_ocr_ground_truth.py, "
+                         "which covers the same windows); kept for the history in its comments")
 @pytest.mark.parametrize("video_id", list(CASES))
 def test_clock_localized_and_correct(video_id):
     start, min_frac, spot_checks = CASES[video_id]
