@@ -117,6 +117,48 @@ def sample_frames(path: Path, start: float, end: float, n: int):
     return out
 
 
+def read_frames(frames, box, log=lambda msg: None):
+    """Read every (timestamp, frame) into a (timestamp, placement-or-None)
+    stream: self-calibrate piece templates at the first opening position
+    (see recognize.calibrate_from_start), re-fit the board box at every
+    later one (recognize.retune_at_start - streams shift the board between
+    games), then match each frame. Returns (model, box, readings); model is
+    None if no opening position was ever seen. Shared by scan.py and
+    tests/dump_readings.py so they can't drift apart."""
+    model: recognize.BoardModel | None = None
+    readings: list[tuple[float, str | None]] = []
+    for ts, frame in frames:
+        if model is None:
+            cand = None
+            if recognize.looks_like_start(recognize.occupancy(frame, box)):
+                cand, tuned = recognize.calibrate_from_start(frame, box)
+            if cand is None:
+                readings.append((ts, None))
+                continue
+            model, box = cand, tuned
+            log(f"      calibrated at t={int(ts)}s "
+                f"(board {'flipped' if model.flipped else 'normal'}, "
+                f"box {box.x},{box.y} {box.w}x{box.h}, "
+                f"{len(model.piece_of)} templates)")
+        rd = recognize.read_board(frame, box, model)
+        if rd.n_pieces >= 28 and recognize.near_start(rd.placement):
+            # (reading first and testing the result costs nothing on the
+            # ordinary frame, unlike an occupancy pre-check of every frame)
+            retuned = recognize.retune_at_start(frame, box, model)
+            if retuned.as_tuple() != box.as_tuple():
+                log(f"      board moved: box {box.x},{box.y} -> {retuned.x},{retuned.y} "
+                    f"{retuned.w}x{retuned.h} at t={int(ts)}s")
+                box = retuned
+                rd = recognize.read_board(frame, box, model)
+        # a spurious extra piece or two is fine here - reconstruction will reject
+        # an impossible position as a skip; a hard None here would look like a gap
+        if rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34:
+            readings.append((ts, rd.placement))
+        else:
+            readings.append((ts, None))
+    return model, box, readings
+
+
 def fmt_clock(seconds: float | None) -> str:
     if seconds is None:
         return "?"
@@ -369,35 +411,11 @@ def main(argv: list[str]) -> int:
         return 0
 
     print(f"[3/6] scanning frames @ {args.fps} fps")
-    model: recognize.BoardModel | None = None
-    readings: list[tuple[float, str | None]] = []
-    n_board = 0
-    for ts, frame in iter_frames(src.path, args.fps, args.start, args.end):
-        if model is None:
-            cand = None
-            if recognize.looks_like_start(recognize.occupancy(frame, box)):
-                cand, tuned = recognize.calibrate_from_start(frame, box)
-            if cand is None:
-                readings.append((ts, None))
-                continue
-            model, box = cand, tuned
-            print(f"      calibrated at t={int(ts)}s "
-                  f"(board {'flipped' if model.flipped else 'normal'}, "
-                  f"box {box.x},{box.y} {box.w}x{box.h}, "
-                  f"{len(model.piece_of)} templates)")
-        rd = recognize.read_board(frame, box, model)
-        # a spurious extra piece or two is fine here - reconstruction will reject
-        # an impossible position as a skip; a hard None here would look like a gap
-        if rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34:
-            readings.append((ts, rd.placement))
-            n_board += 1
-        else:
-            readings.append((ts, None))
-
+    model, box, readings = read_frames(iter_frames(src.path, args.fps, args.start, args.end), box, log=print)
     if model is None:
         print("      never saw an opening position - no games recorded", file=sys.stderr)
         return 3
-    print(f"      {len(readings)} frames, {n_board} with a readable board")
+    print(f"      {len(readings)} frames, {sum(1 for _, p in readings if p)} with a readable board")
 
     print("[4/6] reconstructing games")
     readings = recognize.vote_stream(readings)

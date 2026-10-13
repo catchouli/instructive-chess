@@ -84,6 +84,26 @@ clocks 13%, ratings 52%.)
 | ...on the whole library (loose: any shift, match ≥ 0.42) | 123 → 137 games found, +340 plies captured, but **6 games got wrong trusted moves**: an empty square's edge sliver of a neighbouring piece, shifted towards it, matched a template (phantom pieces) | **No** as-is |
 | ...strict: shifted piece must be centred in the crop and match ≥ 0.7 | On the 6 affected videos + 2 that gained: 0 wrong trusted (loose: 6 games), matched games 21 → 25. Full library: matched 119 → 136, every move right 80 → 91 games, but 3 games with 5 wrong trusted plies under the old trust rule - see trust table | Yes (`2c11d70`) |
 
+### 2026-10-13: first Titled Tuesday streams (3+1 blitz, 2 h, ~11 games each)
+
+Traced with the new `tests/trace_video.py` (replays cached readings through
+reconstruct with a trace, shows each game against its real game) and
+`tests/dump_readings.py`. What broke, in order of damage:
+
+| Finding | Fix | Result |
+|---|---|---|
+| **The board moves between games** on a stream (NFUuaZsR2S8: 12 px up, 4 px left after round 1). With the old box every square matched at 0.1-0.5; the off-grid retry rescued most but not all (a bishop on f1 read empty all game), so games died after a few plies | `recognize.retune_at_start`: at every opening position, re-fit the box and keep it if it reads the start better. Once per game, validated - unlike the confidence-triggered tracking that thrashed | (measuring) |
+| **Premove display**: chess.com draws a premoved piece on its destination with the origin empty while the opponent thinks. 5SX0OAlLmk8: White premoved Rxd1 for 23 s; "5...Qxd1+ 6.Rxd1" went into the record (a 2-ply fuzzy bridge) and the real 5...Qa5 could never be explained | `reconstruct._premove_display`: current position + one piece of the side *not* to move displaced = premove; wait it out, no miss counted | (measuring) |
+| A move shown then taken back (cancelled premove / dragged back): 38.c4 shown 3 s, board reverted, 38.Bg6 played; c4 stayed (the revert looked like move-list browsing) | undo check: after a revert to the previous ply, a different single move from there replaces the last ply | rYTURNjPO50-1 right plies 74 → 88 |
+| A frame caught mid-move (piece drawn on both squares) matched *exactly* by a spurious 2-ply bridge, beating the true single move one square off | lookahead: a bridge of 2+ plies is dropped when the *next* reading is reached from the current position in fewer plies | O2XrdomtLUI-2 18 → 66 right plies, rYTURNjPO50-2 55 → 57, no losses on 12 games |
+| Shortest path isn't the played one: Kf6 Ne4+ Ke5 read as Ke5 Ne4 (transposition) because the Kf6 frame was never drawn (king lifted while the knight moved) | `_stepwise` walked the skipped readings one ply at a time; could not help here (no Kf6 frame exists) and gained nothing elsewhere | **Removed** |
+| Reconstruction gets very slow on a video whose readings are persistently a square off: each unexplained reading burns the full 100,000-node budget | not addressed; the box re-fit removes the cause on that video | |
+
+Also found: John Bartholomew is chess.com `Fins0905` (not `Fins`), Simon
+Williams `Ginger_GM`. His video ZzwYoNjK6_Q: 8/8 games matched, 6 every
+move right, but **ratings 0/8** (small "(2533)" font; reads like 268, 3274)
+and clocks 4/8 - open.
+
 ## Trusted moves (`trust.py`)
 
 Rule: stop two plies before a bunch of 3+ plies (or any bunch past ply 26),

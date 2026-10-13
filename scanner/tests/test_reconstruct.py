@@ -332,3 +332,94 @@ def test_a_shown_and_undone_line_is_retracted():
         readings += [(ts, p), (ts + 1, p)]
         ts += 2
     assert run(readings)[0].moves_san == ITALIAN
+
+
+def _hold(readings, placement, n, ts):
+    for _ in range(n):
+        readings.append((ts, placement))
+        ts += 1.0
+    return ts
+
+
+def test_a_premove_display_is_waited_out():
+    # After 5.dxc5 (Black to move) White premoves Rxd1: the board draws the
+    # rook on d1 (over the queen) and a1 empty, until Black plays 5...Qa5.
+    sans = ["d4", "d5", "Bf4", "c5", "Nc3", "Nf6", "e4", "dxe4", "dxc5"]
+    readings = stream_for(sans, hold=3)
+    ts = readings[-1][0] + 1.0
+    board = chess.Board()
+    for san in sans:
+        board.push_san(san)
+    shown = list(_placement_of(board))
+    a1, d1 = reconstruct._placement_of(board).index("R"), 7 * 8 + 3
+    shown[a1], shown[d1] = ".", "R"
+    ts = _hold(readings, "".join(shown), 20, ts)       # premove shown for 20 s
+    board.push_san("Qa5")
+    ts = _hold(readings, _placement_of(board), 3, ts)
+    board.push_san("Bb5+")
+    _hold(readings, _placement_of(board), 3, ts)
+    games = run(readings)
+    assert len(games) == 1
+    assert games[0].moves_san == sans + ["Qa5", "Bb5+"]
+
+
+def test_a_move_taken_back_is_replaced_by_the_move_played():
+    # 38.c4 appears, the board reverts, then 38.Bg6 is played instead.
+    sans = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]
+    readings = stream_for(sans, hold=3)
+    ts = readings[-1][0] + 1.0
+    board = chess.Board()
+    for san in sans:
+        board.push_san(san)
+    before = _placement_of(board)
+    board.push_san("c3")
+    ts = _hold(readings, _placement_of(board), 3, ts)   # c3 shown
+    board.pop()
+    ts = _hold(readings, before, 3, ts)                  # taken back
+    board.push_san("d3")
+    ts = _hold(readings, _placement_of(board), 3, ts)   # d3 played instead
+    board.push_san("d6")
+    _hold(readings, _placement_of(board), 3, ts)
+    games = run(readings)
+    assert games[0].moves_san == sans + ["d3", "d6"]
+
+
+def test_browsing_back_one_ply_and_returning_keeps_the_move():
+    sans = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]
+    readings = stream_for(sans, hold=3)
+    ts = readings[-1][0] + 1.0
+    board = chess.Board()
+    for san in sans:
+        board.push_san(san)
+    after = _placement_of(board)
+    board.pop()
+    ts = _hold(readings, _placement_of(board), 3, ts)   # viewer steps back one ply
+    board.push_san("Bc5")
+    ts = _hold(readings, after, 3, ts)                   # and forward again
+    board.push_san("c3")
+    _hold(readings, _placement_of(board), 3, ts)
+    games = run(readings)
+    assert games[0].moves_san == sans + ["c3"]
+
+
+def test_a_mid_move_frame_does_not_become_a_spurious_bridge():
+    # The frame catching Rxb2 half-drawn (rook on both squares) is matched
+    # exactly by a 2-ply story; the next frame shows the real position.
+    sans = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6", "Ng5", "d5", "exd5", "Nxd5", "Nxf7", "Kxf7", "Qf3+", "Ke6", "Nc3", "Nb4"]
+    readings = stream_for(sans, hold=3)
+    ts = readings[-1][0] + 1.0
+    board = chess.Board()
+    for san in sans:
+        board.push_san(san)
+    board.push_san("a3")
+    after = _placement_of(board)
+    # mid-move frame: pawn drawn on a3 while a2 still shows it
+    mid = list(after)
+    mid[8 * (8 - 2) + 0] = "P"   # a2 still occupied
+    ts = _hold(readings, "".join(mid), 1, ts)
+    ts = _hold(readings, after, 3, ts)
+    board.push_san("Nxc2+")
+    _hold(readings, _placement_of(board), 3, ts)
+    games = run(readings)
+    assert games[0].moves_san[:len(sans) + 1] == sans + ["a3"]
+    assert games[0].moves_san == sans + ["a3", "Nxc2+"]

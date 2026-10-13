@@ -126,4 +126,8 @@ scanner/.venv/bin/python scanner/tests/benchmark.py # accuracy of the whole cata
 
 `tests/benchmark.py` matches each catalogued game to its real game (linked from the video
 description, or in the chess.com archives of the channel's known accounts) and scores the
-moves, clocks, ratings and narrator side. `scanner/EXPERIMENTS.md` logs what has been tried.
+moves, clocks, ratings and narrator side. To see *why* a video's games came out the way they
+did, `tests/dump_readings.py VIDEO_ID` caches the per-frame board readings and
+`tests/trace_video.py VIDEO_ID --readings` replays them with a trace, showing each game
+against its real game and the readings around the first wrong move.
+`scanner/EXPERIMENTS.md` logs what has been tried.
