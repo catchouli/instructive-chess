@@ -93,6 +93,10 @@ class Game:
     # result) - the position is certain, the move order isn't; trust.py
     # never trusts these
     ambiguous: list[int] = field(default_factory=list)
+    # plies of a bunch accepted from a reading a square off (FUZZ): the
+    # position wasn't seen exactly, so the moves are a best fit - trust.py
+    # stops before them (a wrong such pair leaked 16 trusted plies once)
+    fuzzy: list[int] = field(default_factory=list)
 
     @property
     def ply(self) -> int:
@@ -663,6 +667,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
         nonlocal board
         del current.moves_san[k:], current.move_seconds[k:], history[k + 1:]
         current.ambiguous = [i for i in current.ambiguous if i < k]
+        current.fuzzy = [i for i in current.fuzzy if i < k]
         board = chess.Board()
         for san in current.moves_san:
             board.push_san(san)
@@ -960,6 +965,8 @@ def reconstruct(readings: list[tuple[float, str | None]],
         note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(moves).split()[-len(moves) * 2:]))
         if guessed:
             current.ambiguous.extend(range(current.ply, current.ply + len(moves) + guess_span))
+        if len(moves) >= 2 and not _lands_exactly(board, moves, target):
+            current.fuzzy.extend(range(current.ply, current.ply + len(moves)))
         for mv in moves:
             current.moves_san.append(board.san(mv))
             current.move_seconds.append(ts)
