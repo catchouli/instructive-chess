@@ -132,6 +132,7 @@ and recalibrate as the library grows (it needed it once already).
 | Mover's clock = most common value between their move and the next ply | Most robust | Yes (`38d2053`) |
 | Read a low-contrast idle clock from inside its widget | One game's clock 46% → 100% of frames read | Yes (`0dd2ed5`) |
 | Grow clock boxes vertically; OCR-based candidate validation; coverage threshold 0.35 | 18 of 24 games missing a side fixed | Yes (`0d8a052`) |
+| Board exclusion margin in `find_clock_regions` 10 px → 3 px | chess.com's current layout puts the bottom clock 4 px under the board; the narrator's clock was missing in every game of the Titled Tuesday streams (clocks OK 8/22). Both clocks found on the traced game; existing clock tests unchanged | Yes |
 
 ## Ratings
 
@@ -145,6 +146,7 @@ and recalibrate as the library grows (it needed it once already).
 | ...expected digits from span *width* | Font-dependent; "(150)" read as 1150 | **No** |
 | Drop a 3-digit rating paired 700+ below a 4-digit one | Partial reads become missing, not wrong | Yes (`ebda1a0`) |
 | Per-video reconciliation using the narrator's side (`catalog.reconcile_ratings`): the narrator's rating is one account all video long, so a read >250 from the video's median (of 4-digit reads, when two exist) is blanked; a narrator at 1500+ isn't paired with an opponent under 1000 | 14 wrong reads blanked, 0 right ones lost: wrong sides 32 → 18 of 272 (11.8% → 6.6%). Taking the median over *all* reads blanked a right 2747 on the blurry BdcY0WCN29Y (junk outnumbered real reads) | Yes |
+| Whole-line Tesseract read of the band ("(NNNN)" by regex) next to the glyph path; combined: either alone, agreement, or *nothing* on disagreement | One frame of 28 games (56 sides): glyph 38 right/4 wrong/16 missing, line 41/4/13, combined 42/2/12. Bartholomew's skin (glyph read "(2723)" as 2235 at 0.96) now comes out missing instead of wrong | Yes |
 | Tesseract digit whitelist | No change | No |
 | Contrast stretch / CLAHE fallbacks | Didn't help; CLAHE produced garbage | **No** |
 
