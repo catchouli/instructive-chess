@@ -54,7 +54,20 @@ Tuesday" streams), Daniel Naroditsky (`danielnaroditsky`), John Bartholomew
   whole library. Several ideas that helped on 3 videos were neutral or worse
   on all 52.
 
-## Current state (2026-09-24)
+## Current state (2026-10-14)
+
+Live catalog: **202 games from 59 videos** (the 51 earlier videos plus eight
+Titled Tuesday streams by Rosen, Naroditsky, Bartholomew and GingerGM),
+194 matched to real games: **0 wrong trusted moves** (of 5,758 trusted
+plies), whole 15-move opening trusted in 45%, every move right in 63%,
+clocks right in 86%, both ratings right in 81%, the narrator's colour
+detected right in 100%. The eight blitz streams alone (59 games): every
+move right 55%, clocks 76%, ratings 93%, openings trusted 25% - the trust
+rule was calibrated on speedruns and cuts early on blitz (see the trust
+table; a recalibration is pending the library rescan). The earlier videos
+have not yet been rescanned with today's reconstruction fixes.
+
+## Earlier state (2026-09-24)
 
 Live catalog (2026-09-25), 136 of 141 games matched to real games: **0 wrong
 trusted moves** (of 4,630 trusted plies), 68% of recorded plies trusted, full
