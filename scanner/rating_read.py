@@ -48,6 +48,10 @@ _BAND_HEIGHT = 75     # how far above/below the board to search for rating text 
                        # video seen is deliberate, not just enough for one case.
 _BAND_PAD = 4         # small margin so text right at the board edge isn't clipped
 _MIN_PAREN_GAP = 2    # a run shorter than this can't hold any digits at all
+_MAX_PAREN_GAP = 6    # ...and "(NNNN)" never spans more glyphs than this
+_PAIR_BUDGET = 24     # OCR attempts per text line: a chat-filled sidebar has
+                      # hundreds of narrow glyphs, and trying every pair of
+                      # them once left a scan OCRing for five hours
 
 
 _MIN_AVG_CONFIDENCE = 0.35   # sanity floor (0-1, Tesseract's own 0-100
@@ -357,10 +361,15 @@ def _best_rating_in_chars(mask: np.ndarray, chars: list[tuple[int, int, int, int
     # positive rejection there, so confidence doesn't have to work as hard.
     _MIN_CONFIRMED_CONFIDENCE = 0.3
     best_rating, best_score, best_confirmed_close = None, -1.0, -1
-    for open_idx in confirmed_open:
-        for close_idx in confirmed_close:
-            if close_idx - open_idx < _MIN_PAREN_GAP:
+    budget = _PAIR_BUDGET
+    # rightmost pairs first: the rating ends a "name (rating)" label
+    for close_idx in sorted(confirmed_close, reverse=True):
+        for open_idx in sorted(confirmed_open, reverse=True):
+            if not _MIN_PAREN_GAP <= close_idx - open_idx <= _MAX_PAREN_GAP:
                 continue
+            if budget <= 0:
+                break
+            budget -= 1
             result = _digits_between(crop, chars, open_idx, close_idx)
             if result is None:
                 continue
@@ -373,10 +382,14 @@ def _best_rating_in_chars(mask: np.ndarray, chars: list[tuple[int, int, int, int
     open_idxs = [i for i in narrow_idxs if shapes[i] != "close"]
     close_idxs = [i for i in narrow_idxs if shapes[i] != "open"]
     best_close_idx = -1
-    for open_idx in open_idxs:
-        for close_idx in close_idxs:
-            if close_idx - open_idx < _MIN_PAREN_GAP:
+    budget = _PAIR_BUDGET
+    for close_idx in sorted(close_idxs, reverse=True):
+        for open_idx in sorted(open_idxs, reverse=True):
+            if not _MIN_PAREN_GAP <= close_idx - open_idx <= _MAX_PAREN_GAP:
                 continue
+            if budget <= 0:
+                break
+            budget -= 1
             result = _digits_between(crop, chars, open_idx, close_idx)
             if result is None:
                 continue
