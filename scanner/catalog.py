@@ -51,6 +51,45 @@ def add_trust(entry: dict) -> None:
                                                                   clocks_checked_end=both_clocks)
 
 
+NARRATOR_RATING_SPREAD = 250   # a narrator's rating moves less than this within one video
+TITLED_LEVEL = 1500            # a narrator rated this high isn't paired with...
+OPPONENT_FLOOR = 1000          # ...an opponent under this in a rated pool
+
+
+def reconcile_ratings(entries: list[dict]) -> int:
+    """Cross-check the ratings read for one *video's* games against each
+    other, blanking the implausible ones (a missing rating is harmless, a
+    wrong one isn't). Uses the narrator's side (`pov`): their rating is the
+    same account all video long, so a read far from the video's median is a
+    misread (a 2755 read as 155 or 172 - digits lost to blur). And a
+    narrator at titled level isn't paired with a sub-1000 opponent, so such
+    a read is a misread too. A speedrun's median is low, so the opponent
+    rule doesn't fire there. Returns how many values were blanked."""
+    def narrator(e):
+        return e.get("rating_white") if e.get("pov") == "white" else e.get("rating_black")
+
+    values = sorted(v for v in (narrator(e) for e in entries) if v is not None)
+    if len(values) < 3:
+        return 0
+    # Misreads lose digits (2747 -> 762, 192...), never gain them, so on a
+    # blurry video the 3-digit junk can outnumber the real reads: when at
+    # least two 4-digit reads exist, they define the median.
+    strong = [v for v in values if v >= 1000]
+    base = strong if len(strong) >= 2 else values
+    median = base[len(base) // 2]
+    blanked = 0
+    for e in entries:
+        mine = "rating_white" if e.get("pov") == "white" else "rating_black"
+        theirs = "rating_black" if mine == "rating_white" else "rating_white"
+        if e.get(mine) is not None and abs(e[mine] - median) > NARRATOR_RATING_SPREAD:
+            del e[mine]
+            blanked += 1
+        if median >= TITLED_LEVEL and e.get(theirs) is not None and e[theirs] < OPPONENT_FLOOR:
+            del e[theirs]
+            blanked += 1
+    return blanked
+
+
 def _entry(source: Source, game: Game, index: int, speedrun: bool | None = None) -> dict:
     entry = {
         "id": f"{source.video_id}-{index + 1}",
@@ -94,7 +133,9 @@ def _sort_key(e: dict):
 
 
 def build_entries(source: Source, games: list[Game], speedrun: bool | None = None) -> list[dict]:
-    return [_entry(source, g, i, speedrun) for i, g in enumerate(games)]
+    entries = [_entry(source, g, i, speedrun) for i, g in enumerate(games)]
+    reconcile_ratings(entries)
+    return entries
 
 
 def load(path: Path = DATA_FILE) -> list[dict]:
@@ -136,7 +177,8 @@ def write(entries: list[dict], path: Path = DATA_FILE) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Re-derive the `pov` and `speedrun` tags for every entry of a catalog
-    (they come from fields already stored, so no rescan is needed):
+    and blank implausible ratings (see reconcile_ratings) - all from fields
+    already stored, so no rescan is needed:
 
         scanner/.venv/bin/python scanner/catalog.py [--catalog PATH] [--speedrun VIDEO_ID ...]
                                                      [--no-speedrun VIDEO_ID ...]
@@ -147,14 +189,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-speedrun", nargs="*", default=[], help="video IDs to tag as not speedruns")
     args = ap.parse_args(argv)
     entries = load(args.catalog)
+    by_video: dict[str, list[dict]] = {}
     for e in entries:
         override = True if e["video_id"] in args.speedrun else False if e["video_id"] in args.no_speedrun else None
         tag(e, override)
+        by_video.setdefault(e["video_id"], []).append(e)
+    blanked = sum(reconcile_ratings(v) for v in by_video.values())
     write(entries, args.catalog)
     n_speed = sum(e["speedrun"] for e in entries)
     n_black = sum(e["pov"] == "black" for e in entries)
     print(f"tagged {len(entries)} games in {args.catalog}: {n_speed} speedrun, "
-          f"narrator black in {n_black}")
+          f"narrator black in {n_black}, {blanked} implausible rating(s) blanked")
     return 0
 
 
