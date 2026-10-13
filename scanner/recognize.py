@@ -148,7 +148,7 @@ class BoardModel:
 
 
 def vote_stream(readings: list[tuple[float, str | None]],
-                radius: int = 2, min_support: int = 3) -> list[tuple[float, str | None]]:
+                radius: int = 1, min_support: int = 2) -> list[tuple[float, str | None]]:
     """Per-square temporal majority vote to squash single-frame recognition flicker."""
     arrs = [np.frombuffer(p.encode(), np.uint8) if p else None for _, p in readings]
     out: list[tuple[float, str | None]] = []
@@ -334,6 +334,26 @@ _RETUNE_FINE = [(dx, dy, ds) for dx in (-2, 0, 2) for dy in (-2, 0, 2) for ds in
 _RETUNE_MAX_ERR = 2   # a re-fitted box must read the opening (nearly) perfectly
 
 
+_FIT_ROWS = (0, 1, 3, 4, 6, 7)   # the ranks that tell a well-placed box on an opening frame
+
+
+def _opening_fit(frame_bgr: np.ndarray, box, model: "BoardModel") -> tuple[int, float]:
+    """(squares off the opening on the ranks that matter, -mean match) -
+    read_board on six ranks instead of eight, for the re-fit's many tries."""
+    chars, scores = [], []
+    for r, c, cell in _cells(frame_bgr, box):
+        if r not in _FIT_ROWS:
+            chars.append(None)
+            continue
+        ch, score = _classify_cell(frame_bgr, box, r, c, cell, model)
+        chars.append(ch)
+        if score is not None:
+            scores.append(score)
+    err = min(sum(1 for ch, want in zip(chars, start) if ch is not None and ch != want)
+              for start in (_START, _START_FLIPPED))
+    return err, -(float(np.mean(scores)) if scores else 0.0)
+
+
 def retune_at_start(frame_bgr: np.ndarray, box, model: "BoardModel", known_err: int | None = None):
     """At a frame showing the opening position, re-fit the board box and
     return it if it reads the position (nearly) perfectly and better than
@@ -349,12 +369,10 @@ def retune_at_start(frame_bgr: np.ndarray, box, model: "BoardModel", known_err: 
     pieces over one reading 30 on a real frame. Coarse grid, then fine."""
     from board_detect import Box
 
-    def score(b):
-        rd = read_board(frame_bgr, b, model)
-        return start_error(rd.placement), -rd.confidence
+    score = lambda b: _opening_fit(frame_bgr, b, model)   # noqa: E731
 
-    base = score(box) if known_err is None else (known_err, 0.0)
-    if base[0] == 0:
+    base = score(box)
+    if base[0] == 0 or (known_err is not None and known_err == 0):
         return box
     best, best_score = box, base
     x, y, w, h = box.as_tuple()
@@ -411,59 +429,62 @@ def _shifted_match(frame_bgr: np.ndarray, box, r: int, c: int, model: "BoardMode
     return best_k, best
 
 
+def _classify_cell(frame_bgr: np.ndarray, box, r: int, c: int, cell: np.ndarray,
+                   model: BoardModel, shift: bool = True) -> tuple[str, float | None]:
+    """(FEN char or '.', match score or None) for one square. `shift`:
+    retry a poor match at small offsets (off for the box re-fit, which is
+    looking for the box that needs no such retry)."""
+    if cell.size == 0:
+        return ".", None
+    patch = _patch(cell)
+    diff = (float(np.mean(np.abs(patch - model.empty[(r + c) % 2])))
+            if model.empty is not None else 99.0)
+    if diff < model.occ_diff:                     # matches the empty square -> blank
+        return ".", None
+    mask, frac = _piece_mask(patch)
+    if frac < _MIN_PIECE_FRAC:
+        # no blob at all - without this, ZNCC falls back to the *template's*
+        # mask below and can score a spurious match against plain background
+        # texture (wood grain, a shadow, a stray cursor) with nothing of its
+        # own to disprove it
+        return ".", None
+    eff = np.maximum(model.masks, mask[None])
+    sims = _zncc_many(patch, model.temps, eff)
+    k = int(np.argmax(sims))
+    if sims[k] < model.match_thresh and shift:
+        # A clear piece blob that matches nothing may just sit a few pixels
+        # off the grid (confirmed on a real video: a bishop read as empty
+        # at sim 0.14 matched at 0.83 three pixels higher, while shifting
+        # the whole board made every other square worse). Retry this one
+        # square slightly shifted before giving up on it.
+        k, best = _shifted_match(frame_bgr, box, r, c, model)
+        if best >= max(model.match_thresh, _SHIFT_MIN_SIM):
+            return model.piece_of[k], best
+    if sims[k] < model.match_thresh:
+        # a real, sizeable blob (frac test above passed) that doesn't
+        # confidently match any template - e.g. a piece the mouse cursor
+        # is hovering over/dragging, distorting its shape - but also,
+        # empirically, just an ordinary marginal match on some videos'
+        # rendering. Tried marking this "?" (occupied, unknown) and
+        # treating it as a wildcard in reconstruct._hamming instead of
+        # blank: net worse on a validated test video, where it turned out
+        # *most* frames had at least one such cell, so the "wildcard"
+        # became broad extra slack everywhere rather than a rare,
+        # targeted allowance - reverted. See scanner/tests/test_ground_truth.py.
+        return ".", None
+    return model.piece_of[k], float(sims[k])
+
+
 def read_board(frame_bgr: np.ndarray, box, model: BoardModel) -> Reading:
     chars: list[str] = []
     scores: list[float] = []
     occ = np.zeros((8, 8), bool)
     for r, c, cell in _cells(frame_bgr, box):
-        if cell.size == 0:
-            chars.append(".")
-            continue
-        patch = _patch(cell)
-        diff = (float(np.mean(np.abs(patch - model.empty[(r + c) % 2])))
-                if model.empty is not None else 99.0)
-        if diff < model.occ_diff:                     # matches the empty square -> blank
-            chars.append(".")
-            continue
-        mask, frac = _piece_mask(patch)
-        if frac < _MIN_PIECE_FRAC:
-            # no blob at all - without this, ZNCC falls back to the *template's*
-            # mask below and can score a spurious match against plain background
-            # texture (wood grain, a shadow, a stray cursor) with nothing of its
-            # own to disprove it
-            chars.append(".")
-            continue
-        occ[r, c] = True
-        eff = np.maximum(model.masks, mask[None])
-        sims = _zncc_many(patch, model.temps, eff)
-        k = int(np.argmax(sims))
-        if sims[k] < model.match_thresh:
-            # A clear piece blob that matches nothing may just sit a few pixels
-            # off the grid (confirmed on a real video: a bishop read as empty
-            # at sim 0.14 matched at 0.83 three pixels higher, while shifting
-            # the whole board made every other square worse). Retry this one
-            # square slightly shifted before giving up on it.
-            k, best = _shifted_match(frame_bgr, box, r, c, model)
-            if best >= max(model.match_thresh, _SHIFT_MIN_SIM):
-                chars.append(model.piece_of[k])
-                scores.append(best)
-                continue
-        if sims[k] < model.match_thresh:
-            # a real, sizeable blob (frac test above passed) that doesn't
-            # confidently match any template - e.g. a piece the mouse cursor
-            # is hovering over/dragging, distorting its shape - but also,
-            # empirically, just an ordinary marginal match on some videos'
-            # rendering. Tried marking this "?" (occupied, unknown) and
-            # treating it as a wildcard in reconstruct._hamming instead of
-            # blank: net worse on a validated test video, where it turned out
-            # *most* frames had at least one such cell, so the "wildcard"
-            # became broad extra slack everywhere rather than a rare,
-            # targeted allowance - reverted. See scanner/tests/test_ground_truth.py.
-            chars.append(".")
-            continue
-        chars.append(model.piece_of[k])
-        scores.append(float(sims[k]))
-
+        ch, score = _classify_cell(frame_bgr, box, r, c, cell, model)
+        chars.append(ch)
+        if ch != ".":
+            occ[r, c] = True
+            scores.append(score)
     placement = "".join(chars)
     return Reading(placement, float(np.mean(scores)) if scores else 0.0,
                    sum(ch != "." for ch in placement), occ)
