@@ -53,6 +53,8 @@ TRUTH_CACHE = VIDEO_CACHE / "truth"
 ACCOUNTS = {
     "Eric Rosen": ["imrosen", "ohnomyrosen", "someonecallanambulance"],
     "Daniel Naroditsky": ["SenseiDanya", "OhMyLands", "danielnaroditsky"],
+    "John Bartholomew": ["Fins"],
+    "GingerGM": ["GingerGM"],
 }
 # lichess accounts, searched via the per-user export. That endpoint needs a
 # personal API token (no scopes) - anonymous requests are either refused or
@@ -348,6 +350,18 @@ def match(game: dict, cands: list[dict]) -> tuple[dict | None, str]:
 
 # --- scoring ----------------------------------------------------------------
 
+def narrator_side(channel: str, real: dict) -> str | None:
+    """Which colour the channel's own account played in the real game, or
+    None when neither player is a known account (e.g. a linked game under an
+    unknown alt). Checks the catalog's `pov` field (see catalog.tag)."""
+    names = {u.lower() for u in ACCOUNTS.get(channel, []) + LICHESS_ACCOUNTS.get(channel, [])}
+    if (real.get("white") or "").lower() in names:
+        return "white"
+    if (real.get("black") or "").lower() in names:
+        return "black"
+    return None
+
+
 def score(game: dict, real: dict) -> dict:
     moves = game["moves_san"]
     prefix = _prefix(moves, real["moves_san"])
@@ -440,6 +454,8 @@ def run(catalog: Path) -> dict:
                 row["platform"] = "lichess" if "lichess" in real["source"] else "chess.com"
                 row["linked"] = real.get("linked", False)
                 row.update(score(g, real))
+                row["pov_truth"] = narrator_side(g0["channel"], real)
+                row["pov_ok"] = (g.get("pov") == row["pov_truth"]) if row["pov_truth"] and g.get("pov") else None
             rows.append(row)
     return {"rows": rows, "n_catalog": len(games)}
 
@@ -473,6 +489,12 @@ def print_report(result: dict, show_all: bool) -> None:
         if sub:
             print(f"  -- {platform} only ({len(sub)} games)")
             _summary(sub, indent="     ")
+
+    pov = [r for r in m if r.get("pov_ok") is not None]
+    print(f"  Narrator side (pov) right          {_pct(sum(r['pov_ok'] for r in pov), len(pov))}")
+    wrong_pov = [r["id"] for r in pov if not r["pov_ok"]]
+    if wrong_pov:
+        print(f"           wrong: {' '.join(wrong_pov)}")
 
     tp = sum(r["trusted_ply"] for r in m)
     print("\nTrusted moves (what the web app shows - see scanner/trust.py):")

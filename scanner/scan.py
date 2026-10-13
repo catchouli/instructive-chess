@@ -70,6 +70,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                    help="skip re-reading fast-move moments at a higher frame rate (see refine.py)")
     p.add_argument("--no-clocks", action="store_true", help="skip reading on-screen clocks")
     p.add_argument("--no-ratings", action="store_true", help="skip reading player ratings")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--speedrun", dest="speedrun", action="store_true", default=None,
+                   help="tag the games as speedrun games (default: decided from the video title, see catalog.is_speedrun)")
+    g.add_argument("--no-speedrun", dest="speedrun", action="store_false",
+                   help="tag the games as not speedrun games")
     return p.parse_args(argv)
 
 
@@ -430,15 +435,16 @@ def main(argv: list[str]) -> int:
         ratings = ""
         if g.rating_white is not None or g.rating_black is not None:
             ratings = f"  ratings W={g.rating_white} B={g.rating_black}"
+        pov = "black" if g.flipped else "white"
         print(f"\n  game {i + 1}: {g.ply} plies  conf={g.confidence:.2f}  "
-              f"t={int(g.start_seconds)}s{flip}{clocks}{ratings}")
+              f"t={int(g.start_seconds)}s{flip}  narrator={pov}{clocks}{ratings}")
         print(f"    {g.pgn()[:240]}")
 
     if args.dry_run:
         print("\n(dry run - games.json not modified)")
         return 0
 
-    added, total = catalog.merge(src, kept, args.catalog)
+    added, total = catalog.merge(src, kept, args.catalog, speedrun=args.speedrun)
     print(f"\nwrote {args.catalog}  (+{added} for this video, {total} total)")
     return 0
 
