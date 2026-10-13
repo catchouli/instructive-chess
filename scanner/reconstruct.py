@@ -297,6 +297,7 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
     relevant = _relevant_squares(_placement_of(board), target)
     frontier = [(board.copy(stack=False), [])]
     fallback: tuple[int, list[chess.Move]] | None = None
+    fuzzy_routes: tuple[int, list[list[chess.Move]]] | None = None
     winner = None            # (moves, depth) once exact paths are found
     for depth in range(1, max_depth + 1):
         nxt = []
@@ -331,6 +332,15 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
             alternatives.extend(exact)
         if winner is not None:
             return winner                 # the extra depth was only for alternatives
+        if exact and fallback is not None and depth >= fallback[0] + 2:
+            # An exact match two or more plies deeper than a near-exact one
+            # is a story spun around a misread square (traced: "Ne7 cxd5
+            # Nxd5 Bg2 Nf6" for Nf6 Bg2 dxc4 with the capturing pawn not
+            # yet drawn). One ply deeper is still believed, see the docstring.
+            return fallback[1], fallback[0]
+        if exact and fuzzy_routes is not None and depth >= fuzzy_routes[0] + 2 and alternatives is not None:
+            alternatives[:] = fuzzy_routes[1]      # ...likewise when the near-exact routes transpose
+            return None, "fuzzy-ambiguous"
         if exact:
             if len(exact) == 1:
                 winner = exact[0], depth
@@ -351,6 +361,8 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
             shared = cand[0] if len(cand) == 1 else _common_prefix(cand)
             if shared:
                 fallback = (depth, shared)
+            elif fuzzy_routes is None:
+                fuzzy_routes = (depth, cand)   # near-exact routes with nothing in common
         frontier = nxt
         if not frontier:
             break
@@ -358,6 +370,11 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
         return winner
     if fallback:
         return fallback[1], fallback[0]
+    if fuzzy_routes is not None and alternatives is not None:
+        # the same moves in different orders, each a square off (a frame
+        # caught mid-capture): the caller may guess the order
+        alternatives[:] = fuzzy_routes[1]
+        return None, "fuzzy-ambiguous"
     return None, "none"
 
 
@@ -844,9 +861,10 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 if chosen is not None and chosen != moves:
                     note(ts, f"skipped readings prefer {board.variation_san(chosen)} over {board.variation_san(moves)}")
                     moves = chosen
-            elif moves is None and info == "ambiguous" and len(alternatives) >= 2 and (
-                    (len(alternatives) <= GUESS_MAX_ROUTES and max(len(p) for p in alternatives) <= GUESS_MAX_PLIES)
-                    or _same_moves(alternatives)):
+            elif moves is None and len(alternatives) >= 2 and (
+                    (info == "ambiguous" and len(alternatives) <= GUESS_MAX_ROUTES
+                     and max(len(p) for p in alternatives) <= GUESS_MAX_PLIES)
+                    or (info in ("ambiguous", "fuzzy-ambiguous") and _same_moves(alternatives))):
                 # Several routes, one destination (a burst of premoves: the
                 # knight reached e4 via d2 or c3, nobody saw which). The
                 # position is certain, so the game goes on from it; the

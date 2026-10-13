@@ -67,6 +67,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--catalog", type=Path, default=catalog.DATA_FILE,
                    help="catalog file to write (default web/data/games.json) - point experiments "
                         "at a scratch copy, then score it with tests/benchmark.py --catalog")
+    p.add_argument("--from-readings", action="store_true",
+                   help="reuse the board readings a previous scan saved (scanner/cache/<id>-readings.json) "
+                        "instead of reading every frame again - for re-running reconstruction after a change")
     p.add_argument("--no-refine", action="store_true",
                    help="skip re-reading fast-move moments at a higher frame rate (see refine.py)")
     p.add_argument("--no-clocks", action="store_true", help="skip reading on-screen clocks")
@@ -417,12 +420,26 @@ def main(argv: list[str]) -> int:
         print(f"      wrote {out}")
         return 0
 
-    print(f"[3/6] scanning frames @ {args.fps} fps")
-    model, box, readings = read_frames(iter_frames(src.path, args.fps, args.start, args.end), box, log=print)
+    saved = download.CACHE / f"{src.video_id}-readings.json"
+    if args.from_readings and saved.exists() and not args.start and not args.end:
+        print(f"[3/6] reusing the readings in {saved.name}")
+        data = json.loads(saved.read_text())
+        readings = [(ts, pl) for ts, pl in data["readings"]]
+        # the piece templates aren't saved: calibrate them again on the first opening frame
+        model = None
+        for ts, frame in iter_frames(src.path, args.fps, 0.0, 0.0):
+            if recognize.looks_like_start(recognize.occupancy(frame, box)):
+                model, _ = recognize.calibrate_from_start(frame, box)
+                if model is not None:
+                    break
+        box = board_detect.Box(*data["box"], score=1.0)
+    else:
+        print(f"[3/6] scanning frames @ {args.fps} fps")
+        model, box, readings = read_frames(iter_frames(src.path, args.fps, args.start, args.end), box, log=print)
     if model is None:
         print("      never saw an opening position - no games recorded", file=sys.stderr)
         return 3
-    if not args.start and not args.end and download._looks_like_url(src.url):
+    if not args.from_readings and not args.start and not args.end and download._looks_like_url(src.url):
         # keep the raw readings: reconstruction can then be re-run or traced
         # (tests/trace_video.py) without reading the frames again
         (download.CACHE / f"{src.video_id}-readings.json").write_text(
