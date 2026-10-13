@@ -127,6 +127,7 @@ def read_frames(frames, box, log=lambda msg: None):
     tests/dump_readings.py so they can't drift apart."""
     model: recognize.BoardModel | None = None
     readings: list[tuple[float, str | None]] = []
+    retune_failed_at = -1e9   # a re-fit that found nothing isn't retried for a while
     for ts, frame in frames:
         if model is None:
             cand = None
@@ -141,15 +142,20 @@ def read_frames(frames, box, log=lambda msg: None):
                 f"box {box.x},{box.y} {box.w}x{box.h}, "
                 f"{len(model.piece_of)} templates)")
         rd = recognize.read_board(frame, box, model)
-        if rd.n_pieces >= 28 and recognize.near_start(rd.placement):
+        start_err = recognize.start_error(rd.placement)
+        if start_err and recognize.looks_like_start_reading(rd.placement) and ts - retune_failed_at > 60:
             # (reading first and testing the result costs nothing on the
-            # ordinary frame, unlike an occupancy pre-check of every frame)
-            retuned = recognize.retune_at_start(frame, box, model)
+            # ordinary frame, unlike an occupancy pre-check of every frame;
+            # the re-fit itself is slow, so a failed one isn't retried for
+            # a minute - the next game brings its own start position)
+            retuned = recognize.retune_at_start(frame, box, model, known_err=start_err)
             if retuned.as_tuple() != box.as_tuple():
                 log(f"      board moved: box {box.x},{box.y} -> {retuned.x},{retuned.y} "
                     f"{retuned.w}x{retuned.h} at t={int(ts)}s")
                 box = retuned
                 rd = recognize.read_board(frame, box, model)
+            else:
+                retune_failed_at = ts
         # a spurious extra piece or two is fine here - reconstruction will reject
         # an impossible position as a skip; a hard None here would look like a gap
         if rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34:

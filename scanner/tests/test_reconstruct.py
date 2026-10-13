@@ -423,3 +423,50 @@ def test_a_mid_move_frame_does_not_become_a_spurious_bridge():
     games = run(readings)
     assert games[0].moves_san[:len(sans) + 1] == sans + ["a3"]
     assert games[0].moves_san == sans + ["a3", "Nxc2+"]
+
+
+def test_a_lifted_king_does_not_block_the_moves_played_meanwhile():
+    # White drags the king (a premove) while Black plays: frames show no
+    # white king at all, yet the game goes on.
+    sans = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "d3", "d6"]
+    readings = stream_for(sans, hold=3)
+    ts = readings[-1][0] + 1.0
+    board = chess.Board()
+    for san in sans:
+        board.push_san(san)
+    board.push_san("Nc3")
+    lifted = list(_placement_of(board))
+    board.push_san("Nf6")
+    lifted2 = list(_placement_of(board))
+    for pl in (lifted, lifted2):
+        pl[8 * 7 + 4] = "."          # e1 empty: the king is in hand
+    ts = _hold(readings, "".join(lifted), 2, ts)
+    ts = _hold(readings, "".join(lifted2), 4, ts)
+    board.push_san("Ke2")            # the drag ends
+    ts = _hold(readings, _placement_of(board), 3, ts)
+    board.push_san("O-O")
+    _hold(readings, _placement_of(board), 3, ts)
+    games = run(readings)
+    assert games[0].moves_san == sans + ["Nc3", "Nf6", "Ke2", "O-O"]
+
+
+def test_skipped_readings_pick_the_played_route_through_a_transposition():
+    # Bh6 Qf6 Bg5 and Bg5 Qf6 reach the same position; a noisy frame of the
+    # position after Bh6 Qf6 was skipped on the way and must decide it.
+    sans = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6", "d3", "Be7", "Nc3", "d6", "Bg5", "h6", "Bh4", "O-O", "O-O", "Be6"]
+    readings = stream_for(sans, hold=3)
+    ts = readings[-1][0] + 1.0
+    board = chess.Board()
+    for san in sans:
+        board.push_san(san)
+    board.push_san("Bg3")            # bishop h4-g3 ...
+    board.push_san("Qd7")
+    mid = list(_placement_of(board))
+    mid[8 * 6 + 0] = "."             # a2 misread: a square off, so this frame is skipped
+    ts = _hold(readings, "".join(mid), 2, ts)
+    board.push_san("Bh4")            # ... and back: same position as Bh4 staying put + Qd7
+    ts = _hold(readings, _placement_of(board), 3, ts)
+    board.push_san("Rfd8")
+    _hold(readings, _placement_of(board), 3, ts)
+    games = run(readings)
+    assert games[0].moves_san == sans + ["Bg3", "Qd7", "Bh4", "Rfd8"]

@@ -65,13 +65,17 @@ def _ends_the_game(moves_san: list[str]) -> bool:
     return board.is_checkmate() or board.is_stalemate()
 
 
+CONF_GUESSED = 0.5     # a route guessed among transpositions (reconstruct.Game.ambiguous)
+
+
 def assess(moves_san: list[str], move_seconds: list[float],
-           clocks_checked_end: bool = False) -> tuple[list[float], int]:
+           clocks_checked_end: bool = False, ambiguous: list[int] = ()) -> tuple[list[float], int]:
     """(per-move confidence, trusted_ply) for one game. `clocks_checked_end`:
     both clocks were read, so clock_read.live_move_count has already checked
     that a final mate happened with a clock running - only then does a mate
     waive the end-of-game holdback (videos also show mating lines after a
-    resignation)."""
+    resignation). `ambiguous`: plies whose moves were a guess among routes
+    to the same position; trust ends before the first, like before a bunch."""
     n = len(moves_san)
     bunches = _bunches(move_seconds)
     conf = []
@@ -85,6 +89,11 @@ def assess(moves_san: list[str], move_seconds: list[float],
             conf.append(CONF_SINGLE)
         if trusted == n and i == start and (size >= BIG_BUNCH or (size >= 2 and start >= LATE_PLY)):
             trusted = max(0, start - TRIGGER_MARGIN)
+    for i in ambiguous:
+        if i < n:
+            conf[i] = min(conf[i], CONF_GUESSED)
+    if ambiguous:
+        trusted = min(trusted, max(0, min(ambiguous) - TRIGGER_MARGIN))
     if not (clocks_checked_end and _ends_the_game(moves_san)):
         tail_start = min(n - TAIL_PLIES, max(min(LATE_PLY, n - TAIL_PLIES), n - LATE_TAIL_PLIES))
         for i in range(max(0, tail_start), n):
