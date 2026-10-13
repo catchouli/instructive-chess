@@ -1,7 +1,10 @@
 """Merge scanned games into the static web app's data file (web/data/games.json)."""
 from __future__ import annotations
 
+import argparse
 import json
+import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,6 +13,30 @@ import trust
 from reconstruct import Game
 
 DATA_FILE = Path(__file__).resolve().parents[1] / "web" / "data" / "games.json"
+
+# A speedrun: the narrator plays a fresh low-rated account up the ladder, so
+# the opponents are weak and only the narrator's side of each game is
+# instructive. Recognised from the video title; scan.py --speedrun /
+# --no-speedrun overrides for a video this misses.
+_SPEEDRUN_TITLE = re.compile(r"speed ?run|beginner to master|climbing the rating ladder|rating climb", re.I)
+
+
+def is_speedrun(title: str) -> bool:
+    return bool(_SPEEDRUN_TITLE.search(title or ""))
+
+
+def tag(entry: dict, speedrun: bool | None = None) -> None:
+    """The two fields the web app filters on besides the moves:
+
+    - `pov`: the colour the narrator (the channel's owner) played - the
+      "instructive point of view". A player's own live board shows their
+      side at the bottom, so a board read flipped means the narrator was
+      black. Verified against the real games' player names by
+      tests/benchmark.py (the "narrator side" line).
+    - `speedrun`: see is_speedrun.
+    """
+    entry["pov"] = "black" if entry.get("flipped") else "white"
+    entry["speedrun"] = is_speedrun(entry.get("video_title", "")) if speedrun is None else bool(speedrun)
 
 
 def _clock_seconds(values: list[float | None]) -> list[int | None]:
@@ -24,7 +51,7 @@ def add_trust(entry: dict) -> None:
                                                                   clocks_checked_end=both_clocks)
 
 
-def _entry(source: Source, game: Game, index: int) -> dict:
+def _entry(source: Source, game: Game, index: int, speedrun: bool | None = None) -> dict:
     entry = {
         "id": f"{source.video_id}-{index + 1}",
         "video_id": source.video_id,
@@ -57,6 +84,7 @@ def _entry(source: Source, game: Game, index: int) -> dict:
     if game.rating_black is not None:
         entry["rating_black"] = game.rating_black
     add_trust(entry)   # last: it looks at the clock fields
+    tag(entry, speedrun)
     return entry
 
 
@@ -65,8 +93,8 @@ def _sort_key(e: dict):
     return (e.get("published") or "0000-00-00", -e.get("start_seconds", 0))
 
 
-def build_entries(source: Source, games: list[Game]) -> list[dict]:
-    return [_entry(source, g, i) for i, g in enumerate(games)]
+def build_entries(source: Source, games: list[Game], speedrun: bool | None = None) -> list[dict]:
+    return [_entry(source, g, i, speedrun) for i, g in enumerate(games)]
 
 
 def load(path: Path = DATA_FILE) -> list[dict]:
@@ -79,10 +107,11 @@ def load(path: Path = DATA_FILE) -> list[dict]:
         return []
 
 
-def merge(source: Source, games: list[Game], path: Path = DATA_FILE) -> tuple[int, int]:
+def merge(source: Source, games: list[Game], path: Path = DATA_FILE,
+          speedrun: bool | None = None) -> tuple[int, int]:
     """Replace this video's entries with freshly scanned ones. Returns (added, total)."""
     existing = [e for e in load(path) if e.get("video_id") != source.video_id]
-    fresh = build_entries(source, games)
+    fresh = build_entries(source, games, speedrun)
     combined = existing + fresh
     combined.sort(key=lambda e: _sort_key(e), reverse=True)
 
@@ -95,7 +124,39 @@ def merge(source: Source, games: list[Game], path: Path = DATA_FILE) -> tuple[in
     # and reports as "no games in the catalog" even though nothing is
     # actually wrong. os.replace is atomic on the same filesystem, so a
     # reader always sees either the old file or the new one, never neither.
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(combined, indent=2, ensure_ascii=False) + "\n")
-    tmp.replace(path)
+    write(combined, path)
     return len(fresh), len(combined)
+
+
+def write(entries: list[dict], path: Path = DATA_FILE) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(entries, indent=2, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Re-derive the `pov` and `speedrun` tags for every entry of a catalog
+    (they come from fields already stored, so no rescan is needed):
+
+        scanner/.venv/bin/python scanner/catalog.py [--catalog PATH] [--speedrun VIDEO_ID ...]
+                                                     [--no-speedrun VIDEO_ID ...]
+    """
+    ap = argparse.ArgumentParser(description=main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--catalog", type=Path, default=DATA_FILE)
+    ap.add_argument("--speedrun", nargs="*", default=[], help="video IDs to tag as speedruns regardless of title")
+    ap.add_argument("--no-speedrun", nargs="*", default=[], help="video IDs to tag as not speedruns")
+    args = ap.parse_args(argv)
+    entries = load(args.catalog)
+    for e in entries:
+        override = True if e["video_id"] in args.speedrun else False if e["video_id"] in args.no_speedrun else None
+        tag(e, override)
+    write(entries, args.catalog)
+    n_speed = sum(e["speedrun"] for e in entries)
+    n_black = sum(e["pov"] == "black" for e in entries)
+    print(f"tagged {len(entries)} games in {args.catalog}: {n_speed} speedrun, "
+          f"narrator black in {n_black}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -18,9 +18,19 @@
            placeholder="e.g.  1. e4 c5 2. Nc3   &mdash;  or just  e4 c5 Nc3">
     <button id="clear" type="button" title="Clear">&times;</button>
   </div>
-  <div class="rating-filter">
-    <label for="min-rating">Min rating</label>
-    <input id="min-rating" type="number" inputmode="numeric" min="0" step="50" placeholder="any">
+  <div class="filters">
+    <label>Narrator plays
+      <select id="pov">
+        <option value="">either side</option>
+        <option value="white">White</option>
+        <option value="black">Black</option>
+      </select>
+    </label>
+    <label>Min rating
+      <input id="min-rating" type="number" inputmode="numeric" min="0" step="50" placeholder="any"
+             title="both players rated at least this (ratings are read from the video, approximate)">
+    </label>
+    <label class="check"><input id="no-speedrun" type="checkbox"> Exclude speedruns</label>
   </div>
   <p id="status" class="status"></p>
   <ol id="results" class="results"></ol>
@@ -28,7 +38,8 @@
 
 <footer>
   <p>Games are catalogued automatically by the video scanner. All games begin from the
-     standard starting position.</p>
+     standard starting position. "Narrator" is the master whose channel the video is on; the
+     side they played is read from the board's orientation.</p>
 </footer>
 
 <script type="module" src="app.js"></script>

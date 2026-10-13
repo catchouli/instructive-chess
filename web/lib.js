@@ -23,12 +23,18 @@ export function parseQuery(text) {
   return { sans: chess.history(), ok: true, bad: null };
 }
 
-/** A game's rating for filtering/display purposes: the higher of the two
- *  sides' ratings (a speedrun is usually classified by its host's climbing
- *  rating, not the often much-lower opponent's), or null when neither side
- *  has one - reading player ratings from video is best-effort and often
- *  unavailable (see scanner/rating_read.py). */
+/** A game's rating for the min-rating filter: the *lower* of the two sides'
+ *  known ratings, so "1800+" means both players were at least 1800 - the
+ *  filter exists to skip games whose weaker side isn't worth studying. Null
+ *  when neither side has one: reading ratings from video is best-effort
+ *  (see scanner/rating_read.py). */
 export function gameRating(game) {
+  const vals = [game.rating_white, game.rating_black].filter((v) => v != null);
+  return vals.length ? Math.min(...vals) : null;
+}
+
+/** The higher of the two ratings, for the card's "~2500" pill. */
+export function topRating(game) {
   const vals = [game.rating_white, game.rating_black].filter((v) => v != null);
   return vals.length ? Math.max(...vals) : null;
 }
@@ -41,6 +47,27 @@ export function matchesMinRating(game, minRating) {
   if (minRating == null || Number.isNaN(minRating)) return true;
   const r = gameRating(game);
   return r != null && r >= minRating;
+}
+
+/** The side the narrator (the channel's master) played: 'white' | 'black'
+ *  from the catalog's `pov` field, or null for an entry that doesn't have
+ *  one. The point of the catalog is watching the *narrator* play the line
+ *  you searched for, not their (often much weaker) opponent. */
+export function narratorSide(game) {
+  return game.pov === 'white' || game.pov === 'black' ? game.pov : null;
+}
+
+/** Narrator-side filter: `pov` of '' / null means no filter. A game whose
+ *  side is unknown can't be confirmed to match, so it's excluded. */
+export function matchesPov(game, pov) {
+  if (!pov) return true;
+  return narratorSide(game) === pov;
+}
+
+/** Speedrun filter: when `exclude` is set, drop games tagged `speedrun`
+ *  (the narrator climbing a fresh account against weak opponents). */
+export function matchesSpeedrun(game, exclude) {
+  return !exclude || !game.speedrun;
 }
 
 /** Strict prefix: does `game.moves_san` begin with exactly `qsans`? */

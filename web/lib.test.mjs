@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   parseQuery, matchesPrefix, replay, toPgn, boardSvg, withTimestamp, fmtTime,
-  gameRating, matchesMinRating, trustedView,
+  gameRating, topRating, matchesMinRating, matchesPov, matchesSpeedrun, narratorSide, trustedView,
 } from './lib.js';
 
 let pass = 0;
@@ -78,12 +78,37 @@ t('withTimestamp / fmtTime', () => {
   assert.equal(fmtTime(605), '10:05');
 });
 
-t('gameRating: higher of the two sides, or null', () => {
-  assert.equal(gameRating({ rating_white: 1200, rating_black: 2400 }), 2400);
-  assert.equal(gameRating({ rating_white: 2400, rating_black: 1200 }), 2400);
+t('gameRating: lower of the two sides (both players rated X+), or null', () => {
+  assert.equal(gameRating({ rating_white: 1200, rating_black: 2400 }), 1200);
+  assert.equal(gameRating({ rating_white: 2400, rating_black: 1200 }), 1200);
   assert.equal(gameRating({ rating_white: 1800 }), 1800);
   assert.equal(gameRating({}), null);
   assert.equal(gameRating({ rating_white: null, rating_black: null }), null);
+});
+
+t('topRating: higher of the two sides, for the card pill', () => {
+  assert.equal(topRating({ rating_white: 1200, rating_black: 2400 }), 2400);
+  assert.equal(topRating({ rating_black: 1500 }), 1500);
+  assert.equal(topRating({}), null);
+});
+
+t('narratorSide / matchesPov: from the pov field; unknown side never matches an active filter', () => {
+  assert.equal(narratorSide({ pov: 'white' }), 'white');
+  assert.equal(narratorSide({ pov: 'black' }), 'black');
+  assert.equal(narratorSide({}), null);
+  assert.equal(narratorSide({ pov: 'red' }), null);
+  assert.equal(matchesPov({ pov: 'black' }, null), true);
+  assert.equal(matchesPov({ pov: 'black' }, ''), true);
+  assert.equal(matchesPov({ pov: 'black' }, 'black'), true);
+  assert.equal(matchesPov({ pov: 'black' }, 'white'), false);
+  assert.equal(matchesPov({}, 'white'), false);
+});
+
+t('matchesSpeedrun: only drops tagged speedruns, and only when asked', () => {
+  assert.equal(matchesSpeedrun({ speedrun: true }, false), true);
+  assert.equal(matchesSpeedrun({ speedrun: true }, true), false);
+  assert.equal(matchesSpeedrun({ speedrun: false }, true), true);
+  assert.equal(matchesSpeedrun({}, true), true);
 });
 
 t('matchesMinRating: no filter passes everything, unknown rating excluded once active', () => {
@@ -91,8 +116,8 @@ t('matchesMinRating: no filter passes everything, unknown rating excluded once a
   const unrated = {};
   assert.equal(matchesMinRating(rated, null), true);
   assert.equal(matchesMinRating(unrated, null), true);
-  assert.equal(matchesMinRating(rated, 1900), true);
-  assert.equal(matchesMinRating(rated, 1901), false);
+  assert.equal(matchesMinRating(rated, 1500), true);   // both players at least 1500
+  assert.equal(matchesMinRating(rated, 1501), false);  // the 1500 side falls short
   assert.equal(matchesMinRating(unrated, 0), false);
 });
 

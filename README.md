@@ -34,8 +34,14 @@ python3 -m http.server -d web 8000
 - Empty search box → the 20 most recent games.
 - Type moves (`1. e4 c5 2. Nc3`, or just `e4 c5 Nc3`) → every game whose mainline **begins
   with exactly those moves**. An illegal move filters on the legal prefix and says so.
-- Each result links to the video at the game's timestamp, and expands to a
-  step-through board and the full PGN.
+- Filters: **Narrator plays** (White / Black) — the point is to watch the *narrator* play the
+  line you searched for, not their opponent; **Min rating** (both players at least this;
+  games with no readable rating are excluded while the filter is active); **Exclude
+  speedruns** (the narrator climbing a fresh account against much weaker opponents).
+- Each card names the side the narrator played, and expands to a step-through board, the
+  clocks and ratings read from the video, and the full PGN. Each result links to the video
+  at the game's timestamp.
+- Only the moves the scanner is sure of are shown and searched (see `scanner/trust.py`).
 
 The only runtime dependency is `web/vendor/chess.js` (MIT), vendored locally — the page
 makes no network requests.
@@ -95,6 +101,13 @@ video takes a few minutes (download + ~1 fps frame scan + reconstruction).
 | `--calibrate` | Write `scanner/cache/<id>-calib.png` with the detected board boxed, then exit. |
 | `--crop x,y,w,h` | Skip auto-detection and use this board box. |
 | `--min-confidence 0.7` | Drop reconstructed games below this confidence. |
+| `--speedrun` / `--no-speedrun` | Tag the video's games as (not) a speedrun; by default decided from the title. |
+| `--catalog PATH` | Write to a scratch catalog instead of `web/data/games.json`. |
+
+Each game records which colour the narrator played (`pov`, from the board's orientation -
+a player's own live board has their side at the bottom) and whether the video is a
+speedrun. `scanner/catalog.py` re-derives both tags for an existing catalog without
+rescanning.
 
 ### Scope
 
@@ -108,4 +121,9 @@ that stays put.
 ```sh
 scanner/.venv/bin/python -m pytest scanner/tests/   # scanner: move reconstruction
 node web/lib.test.mjs                               # web: query parsing + matching
+scanner/.venv/bin/python scanner/tests/benchmark.py # accuracy of the whole catalog vs the real games
 ```
+
+`tests/benchmark.py` matches each catalogued game to its real game (linked from the video
+description, or in the chess.com archives of the channel's known accounts) and scores the
+moves, clocks, ratings and narrator side. `scanner/EXPERIMENTS.md` logs what has been tried.

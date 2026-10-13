@@ -4,6 +4,7 @@ before anything replaces web/data/games.json.
 
     scanner/.venv/bin/python scanner/tests/rescan.py --out /tmp/rescanned.json
     scanner/.venv/bin/python scanner/tests/rescan.py --out /tmp/x.json VIDEO_ID [VIDEO_ID ...]
+    scanner/.venv/bin/python scanner/tests/rescan.py --out /tmp/x.json <youtube-url>   # a new video
 
 Each video is scanned by its own scan.py process into its own scratch file
 (scan.py's catalog write is a read-modify-write of one file, so parallel
@@ -22,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import catalog  # noqa: E402
+import download  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = ROOT / "web" / "data" / "games.json"
@@ -31,7 +33,7 @@ SCAN = ROOT / "scanner" / "scan.py"
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("video_ids", nargs="*", help="default: every video in the catalog")
+    ap.add_argument("video_ids", nargs="*", help="video IDs or URLs (new videos welcome); default: every video in the catalog")
     ap.add_argument("--out", type=Path, required=True, help="merged catalog to write")
     ap.add_argument("--jobs", type=int, default=6)
     args = ap.parse_args(argv)
@@ -40,7 +42,12 @@ def main(argv: list[str] | None = None) -> int:
     urls: dict[str, str] = {}
     for g in games:
         urls.setdefault(g["video_id"], g["video_url"])
-    vids = args.video_ids or list(urls)
+    # Videos not yet in the catalog (new additions) can be given as IDs or URLs.
+    vids = []
+    for v in args.video_ids or list(urls):
+        vid = download.video_id_from_url(v) if download._looks_like_url(v) else v
+        urls.setdefault(vid, v if download._looks_like_url(v) else f"https://www.youtube.com/watch?v={vid}")
+        vids.append(vid)
     work = args.out.parent / (args.out.stem + "_parts")
     work.mkdir(parents=True, exist_ok=True)
 

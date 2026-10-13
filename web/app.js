@@ -1,6 +1,7 @@
 import {
   parseQuery, matchesPrefix, replay, moveLabel, toPgn, boardSvg,
-  withTimestamp, fmtTime, gameRating, matchesMinRating, trustedView,
+  withTimestamp, fmtTime, topRating, matchesMinRating, matchesPov, matchesSpeedrun,
+  narratorSide, trustedView,
 } from './lib.js';
 
 const DEFAULT_LIMIT = 20;   // games shown when the search box is empty
@@ -10,6 +11,8 @@ const els = {
   query: document.getElementById('query'),
   clear: document.getElementById('clear'),
   minRating: document.getElementById('min-rating'),
+  pov: document.getElementById('pov'),
+  noSpeedrun: document.getElementById('no-speedrun'),
   status: document.getElementById('status'),
   results: document.getElementById('results'),
 };
@@ -31,10 +34,32 @@ async function init() {
   els.query.addEventListener('input', debounce(render, 130));
   els.clear.addEventListener('click', () => { els.query.value = ''; render(); els.query.focus(); });
   els.minRating.addEventListener('input', debounce(render, 130));
+  els.pov.addEventListener('change', render);
+  els.noSpeedrun.addEventListener('change', render);
 
-  const q = decodeURIComponent(location.hash.replace(/^#q=/, ''));
-  if (q) els.query.value = q;
+  readHash();
   render();
+}
+
+// The search and filters live in the URL hash (#q=...&pov=white&min=2000&nospeedrun=1)
+// so a search can be bookmarked or shared.
+function readHash() {
+  const raw = location.hash.replace(/^#/, '');
+  const params = new URLSearchParams(raw.startsWith('q=') || raw.includes('&') ? raw : 'q=' + raw);
+  els.query.value = params.get('q') || '';
+  els.pov.value = ['white', 'black'].includes(params.get('pov')) ? params.get('pov') : '';
+  els.minRating.value = /^\d+$/.test(params.get('min') || '') ? params.get('min') : '';
+  els.noSpeedrun.checked = params.get('nospeedrun') === '1';
+}
+
+function writeHash() {
+  const params = new URLSearchParams();
+  if (els.query.value) params.set('q', els.query.value);
+  if (els.pov.value) params.set('pov', els.pov.value);
+  if (els.minRating.value !== '') params.set('min', els.minRating.value);
+  if (els.noSpeedrun.checked) params.set('nospeedrun', '1');
+  const h = params.toString();
+  history.replaceState(null, '', h ? '#' + h : location.pathname + location.search);
 }
 
 function byNewest(a, b) {
@@ -44,15 +69,20 @@ function byNewest(a, b) {
 
 function render() {
   const raw = els.query.value;
-  history.replaceState(null, '', raw ? '#q=' + encodeURIComponent(raw) : location.pathname + location.search);
+  writeHash();
   const { sans, ok, bad } = parseQuery(raw);
   const minRating = els.minRating.value === '' ? null : Number(els.minRating.value);
+  const pov = els.pov.value || null;
+  const noSpeedrun = els.noSpeedrun.checked;
 
-  const matched = GAMES.filter((g) => matchesPrefix(g, sans) && matchesMinRating(g, minRating));
+  const matched = GAMES.filter((g) => matchesPrefix(g, sans) && matchesMinRating(g, minRating)
+    && matchesPov(g, pov) && matchesSpeedrun(g, noSpeedrun));
   const total = matched.length;
   const limit = sans.length === 0 ? DEFAULT_LIMIT : RESULT_LIMIT;
   const shown = matched.slice(0, limit);
-  const ratingNote = minRating != null ? ` · rated ${minRating}+` : '';
+  const ratingNote = (minRating != null ? ` · both rated ${minRating}+` : '')
+    + (pov ? ` · narrator plays ${pov}` : '')
+    + (noSpeedrun ? ' · no speedruns' : '');
 
   if (!GAMES.length) {
     els.status.textContent = 'No games in the catalog yet — run the video scanner to add some.';
@@ -83,9 +113,12 @@ function card(g, hl) {
 
   const conf = g.confidence ?? 0;
   const cls = conf >= 0.9 ? 'good' : conf >= 0.75 ? 'ok' : 'weak';
-  const rating = gameRating(g);
+  const rating = topRating(g);
   const ratingPill = rating != null
     ? `<span class="pill" title="higher-rated side (approximate - read from video)">~${rating}</span>` : '';
+  const speedrunPill = g.speedrun ? '<span class="pill speedrun" title="the narrator climbing a fresh account against weaker opponents">speedrun</span>' : '';
+  const side = narratorSide(g);
+  const sideNote = side ? ` plays <span class="pov">${side === 'white' ? '♔ White' : '♚ Black'}</span>` : '';
   const summary = document.createElement('summary');
   summary.innerHTML = `
     <span class="title">${escapeHtml(g.video_title || g.video_id)}</span>
@@ -93,8 +126,9 @@ function card(g, hl) {
       <span class="pill">${g.ply} ply</span>
       <span class="pill ${cls}" title="reconstruction confidence">${Math.round(conf * 100)}%</span>
       ${ratingPill}
+      ${speedrunPill}
     </span>
-    <span class="meta">${escapeHtml(g.channel || 'Unknown')}${g.published ? ' · ' + g.published : ''}</span>
+    <span class="meta">${escapeHtml(g.channel || 'Unknown')}${sideNote}${g.published ? ' · ' + g.published : ''}</span>
     <span class="moves-inline">${inlineMoves(g.moves_san, hl)}</span>`;
   d.append(summary);
 
@@ -141,11 +175,15 @@ function detail(g) {
   clockLabel.className = 'clock-label';
   const ratingLabel = document.createElement('div');
   ratingLabel.className = 'clock-label';
+  const narrator = narratorSide(g);
+  const who = (side) => (side === narrator ? `${escapeHtml(g.channel || 'narrator')} (${side})` : side);
   if (g.rating_white != null || g.rating_black != null) {
     const parts = [];
-    if (g.rating_white != null) parts.push(`White ${g.rating_white}`);
-    if (g.rating_black != null) parts.push(`Black ${g.rating_black}`);
+    if (g.rating_white != null) parts.push(`${who('White')} ${g.rating_white}`);
+    if (g.rating_black != null) parts.push(`${who('Black')} ${g.rating_black}`);
     ratingLabel.textContent = `♟ ${parts.join(' · ')} (approximate)`;
+  } else if (narrator) {
+    ratingLabel.textContent = `♟ ${g.channel || 'Narrator'} plays ${narrator}`;
   } else {
     ratingLabel.hidden = true;
   }

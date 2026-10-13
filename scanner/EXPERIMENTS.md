@@ -4,6 +4,40 @@ What's been tried to make the scanner more accurate, what it measured, and
 whether it was kept. Read this before trying an idea, since several obvious
 ones have already failed for non-obvious reasons. Add to it as you go.
 
+## Requirements and roadmap (updated 2026-10-13)
+
+What the catalog is for: finding instructive games by their opening moves,
+where the *narrator* (the master whose channel it is) is the one playing the
+line you looked up. Requirements from the user, in priority order:
+
+1. **Never show a wrong move** (trusted plies; see `trust.py`). Target for
+   every reading - moves, clocks, ratings - is 95%+ of games right.
+2. **Narrator side ("instructive POV")**: record which colour the narrator
+   played in every game, show it on each card, and let the user filter by
+   it. The point: looking up an opening and finding a weak speedrun
+   *opponent* is the one playing it is useless. Derived from board
+   orientation (`flipped`: a player's own live board has their side at the
+   bottom) - verified against the real games' player names by
+   `tests/benchmark.py` (POV row). Stored as `pov` ("white"/"black").
+3. **Filters on the site**: narrator side (any / white / black), minimum
+   rating, and "exclude speedruns". A game with no readable rating is
+   excluded by an active rating filter rather than shown as a false match.
+4. **Expand the catalog** - preferring **Titled Tuesday and other
+   high-level tournament videos** over speedruns (speedrun opponents are
+   weak, so the opponent's half of the game isn't instructive). Each video
+   is tagged `speedrun: true/false` from its title ("Speedrun", "Beginner
+   To Master", "Climbing the Rating Ladder"...); `scan.py --speedrun /
+   --no-speedrun` overrides.
+5. Expand the test suite along with the catalog: every new video with
+   ground truth (linked games or a known account - see `ACCOUNTS` in
+   `tests/benchmark.py`) grows the benchmark. Recheck the trust rule on
+   the bigger library (0 wrong trusted plies is the bar).
+
+Candidate channels and accounts for tournament videos: Eric Rosen
+(`imrosen`; many 2h "Facing the World's BEST Chess Players in Titled
+Tuesday" streams), Daniel Naroditsky (`danielnaroditsky`), John Bartholomew
+(chess.com `Fins`), GingerGM / Simon Williams (chess.com `GingerGM`).
+
 ## How things are measured
 
 - `tests/benchmark.py` matches each catalogued game to its real game (linked
