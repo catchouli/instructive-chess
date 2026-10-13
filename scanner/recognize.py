@@ -60,8 +60,11 @@ def _cells(frame_bgr: np.ndarray, box):
     iy = (h / 8) * _INSET
     for r in range(8):
         for c in range(8):
-            y0, y1 = int(ye[r] + iy), int(ye[r + 1] - iy)
-            x0, x1 = int(xe[c] + ix), int(xe[c + 1] - ix)
+            # a board clipped by the frame edge (seen on a stream whose board
+            # sat a few pixels above the top) must not wrap around via a
+            # negative index
+            y0, y1 = max(0, int(ye[r] + iy)), max(0, int(ye[r + 1] - iy))
+            x0, x1 = max(0, int(xe[c] + ix)), max(0, int(xe[c + 1] - ix))
             yield r, c, frame_bgr[y0:y1, x0:x1]
 
 
@@ -308,6 +311,32 @@ def calibrate_from_start(frame_bgr: np.ndarray, box, tolerance: int = 6):
     if err > tolerance:
         return None, box
     return model, box
+
+
+def near_start(placement: str, tolerance: int = 10) -> bool:
+    """Does this reading look like the opening position in either
+    orientation, allowing for a few squares misread (a shifted box)?"""
+    return min(_hamming_str(placement, _START), _hamming_str(placement, _START_FLIPPED)) <= tolerance
+
+
+def retune_at_start(frame_bgr: np.ndarray, box, model: "BoardModel"):
+    """At a frame showing the opening position, re-fit the board box and
+    return it if it reads the position better than the current box does.
+
+    A stream's layout can shift between games (confirmed on a real video:
+    the board moved 12 px up and 4 px left between round 1 and round 2, and
+    with the old box every square matched at 0.1-0.5 instead of 0.9, so a
+    bishop went unread all game and the game was lost after four plies).
+    Re-fitting on a confidence drop was tried and thrashed (see
+    EXPERIMENTS.md); a start position is a safe, once-per-game moment, and
+    the better reading of the known position is the proof."""
+    cand = autotune_box(frame_bgr, box)
+    if cand.as_tuple() == box.as_tuple():
+        return box
+    def err(b):
+        rd = read_board(frame_bgr, b, model)
+        return min(_hamming_str(rd.placement, _START), _hamming_str(rd.placement, _START_FLIPPED))
+    return cand if err(cand) < err(box) else box
 
 
 def _hamming_str(a: str, b: str) -> int:

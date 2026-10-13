@@ -24,6 +24,10 @@ MAX_MISSES = 10        # consecutive unexplainable readings before a game is clo
 GAP_FRAMES = 10         # this many consecutive board-less frames ends a game
 DETOUR_MAX_PLIES = 8   # longest shown-then-undone line retracted (see the detour check)
 MAX_PLIES = 400
+LOOKAHEAD_S = 12.0     # a multi-ply bridge is checked against the next reading
+                       # this close (see the lookahead in reconstruct)
+LOOKAHEAD = True
+UNDO = True            # the undo check in reconstruct
 OPEN_DEPTH = 5         # a video that skips the opening frames: accept an early
 OPEN_HAMMING = 16     # position implied uniquely from the standard start
 START_TOLERANCE = 1     # allowed mismatched squares when spotting a start position
@@ -252,7 +256,7 @@ def _has_wasted_round_trip(board: chess.Board, path: list[chess.Move]) -> bool:
     return any(cur == orig for cur, orig in origin.items())
 
 
-def _find_sequence(board: chess.Board, target: str, max_depth: int):
+def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int = NODE_BUDGET):
     """Moves from *board* that we can be sure of on the way to placement *target*.
 
     An exact match (hamming 0) at any depth always wins over a merely-close one
@@ -275,7 +279,6 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int):
     """
     relevant = _relevant_squares(_placement_of(board), target)
     frontier = [(board.copy(stack=False), [])]
-    budget = NODE_BUDGET
     fallback: tuple[int, list[chess.Move]] | None = None
     for depth in range(1, max_depth + 1):
         nxt = []
@@ -323,6 +326,50 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int):
     if fallback:
         return fallback[1], fallback[0]
     return None, "none"
+
+
+def _single_ply_to(board: chess.Board, target: str, tolerance: int) -> list[chess.Move]:
+    """Legal moves from *board* landing within *tolerance* squares of *target*."""
+    out = []
+    for mv in board.legal_moves:
+        board.push(mv)
+        if _hamming(_placement_of(board), target) <= tolerance:
+            out.append(mv)
+        board.pop()
+    return out
+
+
+def _premove_display(board: chess.Board, target: str) -> str | None:
+    """If *target* is the current position with one piece of the side NOT to
+    move displaced, the name of that premove (e.g. "a1d1"), else None.
+
+    chess.com and lichess draw a premove as if it were made: the piece sits
+    on its destination (covering whatever was there) and its origin is
+    empty, for as long as the opponent thinks. That picture is one legal
+    sequence away from the real position more often than you'd hope -
+    traced on a real game: White premoved Rxd1 expecting ...Qxd1+, the
+    board showed a rook on d1 and a1 empty for 23 seconds, and "5...Qxd1+
+    6.Rxd1" went into the record while the opponent played 5...Qa5. The
+    premoving side is the one *not* on move, which no legal sequence can
+    start with, so the pattern is cheap to recognise and safe to wait out."""
+    cur = _placement_of(board)
+    diff = [i for i in range(64) if cur[i] != target[i]]
+    if len(diff) != 2:
+        return None
+    mover_white = not board.turn            # the side not on move
+    for a in diff:
+        b_ = diff[1] if a == diff[0] else diff[0]
+        piece = cur[a]
+        if piece == "." or piece.isupper() != mover_white or target[a] != "." or target[b_] != piece:
+            continue
+        probe = board.copy(stack=False)
+        probe.turn = not probe.turn
+        mv = chess.Move(_square_of(a), _square_of(b_))
+        # the premove only has to fit the piece's movement: the sites let you
+        # premove onto your own piece (the real case: Rxd1 over the queen)
+        if mv in probe.pseudo_legal_moves or _square_of(b_) in probe.attacks(_square_of(a)):
+            return mv.uci()
+    return None
 
 
 def _distinct_states(readings: list[tuple[float, str | None]]):
@@ -399,8 +446,13 @@ def _clock_contradicts_bridge(clock_by_side: dict[str, list[tuple[float, float]]
 
 
 def reconstruct(readings: list[tuple[float, str | None]],
-                 clock_by_side: dict[str, list[tuple[float, float]]] | None = None) -> list[Game]:
+                 clock_by_side: dict[str, list[tuple[float, float]]] | None = None,
+                 trace=None) -> list[Game]:
+    """`trace(ts, message)`, if given, is told what happened at each reading
+    (games opened and closed, moves taken, readings skipped and why) - for
+    debugging a video, see tests/trace_video.py."""
     events = _distinct_states(readings)
+    note = trace or (lambda ts, msg: None)
     games: list[Game] = []
     current: Game | None = None
     board: chess.Board | None = None
@@ -411,13 +463,16 @@ def reconstruct(readings: list[tuple[float, str | None]],
     # mid-game - see the browsing check in the loop below.
     history: list[str] = []
     browsing = False
+    undone_from: int | None = None  # ply count the board just reverted to (see the undo check)
 
-    def close():
-        nonlocal current, board, history, browsing
+    def close(why: str = ""):
+        nonlocal current, board, history, browsing, undone_from
+        if current:
+            note(last_ts, f"close {why}: {current.ply} plies, {current.skipped} skipped")
         if current and current.ply >= 2:
             games.append(current)
         current, board = None, None
-        history, browsing = [], False
+        history, browsing, undone_from = [], False, None
 
     def retract_to(k: int) -> None:
         nonlocal board
@@ -426,15 +481,24 @@ def reconstruct(readings: list[tuple[float, str | None]],
         for san in current.moves_san:
             board.push_san(san)
 
+    def next_state(i: int):
+        """The next readable board after events[i], if it's soon enough."""
+        for kind2, ts2, placement2 in events[i + 1:i + 3]:
+            if kind2 != "state" or ts2 - events[i][1] > LOOKAHEAD_S:
+                return None
+            return placement2
+        return None
+
     misses = 0
-    for kind, ts, placement in events:
+    for ei, (kind, ts, placement) in enumerate(events):
         if kind == "gap":
-            close()
+            close("gap")
             continue
 
         orient = _is_start(placement)
         if orient is not None:
-            close()
+            close("new start")
+            note(ts, f"start ({orient})")
             current = Game(start_seconds=ts, flipped=(orient == "flipped"))
             board = chess.Board()
             history = [_placement_of(board)]
@@ -462,6 +526,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                         current.clean += 1
                         misses = 0
                         last_ts = ts
+                        note(ts, f"open mid-game ({'flipped' if flip else 'normal'}) with {' '.join(current.moves_san)}")
                         break
             continue
 
@@ -470,7 +535,31 @@ def reconstruct(readings: list[tuple[float, str | None]],
         if target == cur_placement:
             misses = 0
             browsing = False
+            undone_from = None
             continue
+
+        # A move shown and taken back: the board reverted to the position
+        # before the last ply (a cancelled premove, a takeback, or a piece
+        # dragged and dropped back), and now shows a *different* move from
+        # there. Confirmed on a real game: 38.c4 appeared for three seconds,
+        # the board reverted, then 38.Bg6 was played - and c4 stayed in the
+        # record while Bg6 could no longer be explained. Retract the ply and
+        # take the new one instead.
+        if UNDO and undone_from is not None and undone_from == len(history) - 2:
+            prev = chess.Board()
+            for san in current.moves_san[:-1]:
+                prev.push_san(san)
+            cands = _single_ply_to(prev, target, 0)
+            if len(cands) == 1:
+                note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} taken back")
+                retract_to(len(history) - 2)
+                current.moves_san.append(board.san(cands[0]))
+                current.move_seconds.append(ts)
+                board.push(cands[0])
+                history.append(_placement_of(board))
+                current.clean += 1
+                misses, last_ts, browsing, undone_from = 0, ts, False, None
+                continue
 
         # The viewer stepping back through the move list mid-game (confirmed
         # on several real videos) shows earlier positions, and stepping back
@@ -486,6 +575,15 @@ def reconstruct(readings: list[tuple[float, str | None]],
         earlier = [k for k in range(n) if history[k] == target]
         if earlier and (browsing or earlier[-1] == n - 1 or (n - earlier[-1]) % 2 == 0):
             browsing = True
+            if earlier[-1] == n - 1:
+                undone_from = n - 1
+            note(ts, f"browsing back to ply {earlier[-1]}")
+            continue
+
+        premove = _premove_display(board, target)
+        if premove is not None:
+            # not a move, not noise either - the opponent is still thinking
+            note(ts, f"premove shown ({premove})")
             continue
 
         # Always search to the full depth on the first (and possibly only) try:
@@ -497,22 +595,51 @@ def reconstruct(readings: list[tuple[float, str | None]],
         # produces a fresh "state" event to retry on - _distinct_states
         # collapses repeats - so it would only ever get the one, shallow, attempt.
         if _reachable(cur_placement, target):
-            moves, info = _find_sequence(board, target, MAX_DEPTH)
+            # Once a few readings in a row couldn't be explained the game is
+            # most likely lost (or the board is being misread the same way
+            # every frame), and burning the full budget on every further
+            # reading made one blitz stream take an hour to reconstruct.
+            budget = NODE_BUDGET if misses < 2 else NODE_BUDGET // 4 if misses < 5 else NODE_BUDGET // 20
+            moves, info = _find_sequence(board, target, MAX_DEPTH, budget)
         else:
             moves, info = None, "unreachable"
         if moves is not None and _clock_contradicts_bridge(clock_by_side, board, moves, last_ts, ts):
             moves, info = None, "clock-contradicted"
+        # A reading explained only by several plies at once deserves a second
+        # look: a frame caught mid-move (a piece lifted, a capture half
+        # drawn) is a square or two off the real next position, and a
+        # legal-but-spurious 2-3 ply sequence can land *exactly* on such a
+        # frame, beating the true single move that lands one square off
+        # (traced on real games: "Rxa3 ..." recorded for Rxb2, "Qa7 ..." for
+        # Qxc4). So if the very next reading is reached from the *current*
+        # position by fewer plies than this bridge needs, this reading was
+        # noise: skip it and let the next one tell the story.
+        if LOOKAHEAD and moves is not None and len(moves) >= 2:
+            following = next_state(ei)
+            if following is not None:
+                nxt_tgt = following[::-1] if current.flipped else following
+                if nxt_tgt != cur_placement and _reachable(cur_placement, nxt_tgt):
+                    short, _ = _find_sequence(board, nxt_tgt, len(moves) - 1)
+                    if short:
+                        b2 = board.copy(stack=False)
+                        for mv in short:
+                            b2.push(mv)
+                        if _placement_of(b2) == nxt_tgt:
+                            moves, info = None, "superseded"
         if moves is None:
             # a noisy / mid-animation reading - step over it and try to resync
             misses += 1
             current.skipped += 1
+            note(ts, f"skip ({info}; {_hamming(cur_placement, target)} squares off) miss {misses}")
             if misses >= MAX_MISSES:
-                close()
+                close("too many misses")
             continue
 
         misses = 0
         last_ts = ts
         browsing = False
+        undone_from = None
+        note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(moves).split()[-len(moves) * 2:]))
         for mv in moves:
             current.moves_san.append(board.san(mv))
             current.move_seconds.append(ts)
@@ -537,6 +664,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
         if back is not None:
             loop_times = current.move_seconds[back:n]
             if len(set(loop_times)) < len(loop_times):
+                note(ts, f"detour: retract to ply {back}")
                 retract_to(back)
 
         if board.is_checkmate() or board.is_stalemate():
@@ -546,11 +674,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
             # analysis mode, which looks like an ordinary legal continuation
             # from the board alone) would get silently grafted onto the real
             # game's move list as if it had actually been played.
-            close()
+            close("mate/stalemate")
             continue
 
         if current.ply >= MAX_PLIES:
-            close()
+            close("max plies")
 
-    close()
+    close("end of readings")
     return games

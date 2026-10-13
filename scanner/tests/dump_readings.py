@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import board_detect   # noqa: E402
 import download       # noqa: E402
 import recognize       # noqa: E402
+import scan  # noqa: E402
 from scan import iter_frames, sample_frames  # noqa: E402
 
 
@@ -28,23 +29,9 @@ def dump(target: str, fps: float = 1.0, start: float = 0.0, end: float = 0.0) ->
     if box is None:
         raise SystemExit("board not found")
 
-    model = None
-    readings = []
-    for ts, frame in iter_frames(src.path, fps, start, end):
-        if model is None:
-            cand = None
-            if recognize.looks_like_start(recognize.occupancy(frame, box)):
-                cand, tuned = recognize.calibrate_from_start(frame, box)
-            if cand is None:
-                readings.append((ts, None))
-                continue
-            model, box = cand, tuned
-            print(f"calibrated at t={int(ts)}s box={box.x},{box.y} {box.w}x{box.h}")
-        rd = recognize.read_board(frame, box, model)
-        if rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34:
-            readings.append((ts, rd.placement))
-        else:
-            readings.append((ts, None))
+    model, box, readings = scan.read_frames(iter_frames(src.path, fps, start, end), box, log=print)
+    if model is None:
+        raise SystemExit("never saw an opening position")
 
     out = download.CACHE / f"{src.video_id}-readings.json"
     out.write_text(json.dumps({"box": box.as_tuple(), "fps": fps, "readings": readings}))

@@ -421,6 +421,41 @@ def _rating_in_band(gray: np.ndarray, y0: int, y1: int, x0: int, x1: int
     return best
 
 
+_PAREN_RATING_RE = re.compile(r"\((\d{3,4})\)")
+
+
+def _line_rating(gray: np.ndarray, y0: int, y1: int, x0: int, x1: int) -> tuple[int, float] | None:
+    """Read the whole band as text and take the "(NNNN)" in it - a second
+    opinion next to the glyph-by-glyph path above. Confirmed on a real
+    video (chess.com's current skin, 1080p): the glyph path read "(2723)"
+    as 2235 at confidence 0.96 and found nothing for "(2533)", while
+    Tesseract given the whole line read both exactly - the parentheses
+    anchor the number, and the name beside it gives the model context the
+    isolated digit crop lacks. Returns (rating, confidence) of the
+    rightmost parenthesised number on the line (the rating always ends a
+    "name (rating)" label), or None."""
+    y0, x0 = max(0, y0), max(0, x0)
+    crop = gray[y0:y1, x0:x1]
+    if crop.size == 0 or crop.shape[0] < 8:
+        return None
+    big = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    best = None
+    for psm in (7, 6):
+        data = pytesseract.image_to_data(big, config=f"--psm {psm}", output_type=pytesseract.Output.DICT)
+        for text, conf in zip(data["text"], data["conf"]):
+            m = _PAREN_RATING_RE.search(text)
+            if not m:
+                continue
+            value, c = int(m.group(1)), float(conf) / 100.0
+            if len(m.group(1)) == 4 and m.group(1)[0] not in "123":
+                continue
+            if best is None or c > best[1]:
+                best = (value, c)
+        if best is not None:
+            break
+    return best
+
+
 def _row_clusters(chars: list[tuple[int, int, int, int]]) -> list[list[int]]:
     """Group glyph indices into text lines by vertical (y-range) overlap.
 
