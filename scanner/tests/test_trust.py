@@ -32,3 +32,12 @@ def test_an_unchecked_mate_is_held_back_like_any_ending():
     mate = ["f3", "e5", "g4", "Qh4#"]
     conf, trusted = trust.assess(mate, [1, 2, 2, 3])
     assert trusted == 4 - trust.TAIL_PLIES
+
+
+def test_a_fuzzy_bunch_ends_trust_before_it():
+    import trust
+    sans = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d4", "exd4", "cxd4", "Bb4+"]
+    secs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 9.0, 11.0, 12.0]
+    conf, trusted = trust.assess(sans, secs, fuzzy=[8, 9])
+    assert trusted == 8 - trust.TRIGGER_MARGIN
+    assert conf[8] <= trust.CONF_FUZZY and conf[9] <= trust.CONF_FUZZY

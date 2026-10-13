@@ -66,16 +66,20 @@ def _ends_the_game(moves_san: list[str]) -> bool:
 
 
 CONF_GUESSED = 0.5     # a route guessed among transpositions (reconstruct.Game.ambiguous)
+CONF_FUZZY = 0.9       # a bunch accepted from a reading a square off (reconstruct.Game.fuzzy)
 
 
 def assess(moves_san: list[str], move_seconds: list[float],
-           clocks_checked_end: bool = False, ambiguous: list[int] = ()) -> tuple[list[float], int]:
+           clocks_checked_end: bool = False, ambiguous: list[int] = (),
+           fuzzy: list[int] = ()) -> tuple[list[float], int]:
     """(per-move confidence, trusted_ply) for one game. `clocks_checked_end`:
     both clocks were read, so clock_read.live_move_count has already checked
     that a final mate happened with a clock running - only then does a mate
     waive the end-of-game holdback (videos also show mating lines after a
     resignation). `ambiguous`: plies whose moves were a guess among routes
-    to the same position; trust ends before the first, like before a bunch."""
+    to the same position; trust ends before the first, like before a bunch.
+    `fuzzy`: plies of a bunch accepted from a reading a square off - the
+    same treatment (a wrong such pair leaked 16 trusted plies)."""
     n = len(moves_san)
     bunches = _bunches(move_seconds)
     conf = []
@@ -92,8 +96,12 @@ def assess(moves_san: list[str], move_seconds: list[float],
     for i in ambiguous:
         if i < n:
             conf[i] = min(conf[i], CONF_GUESSED)
-    if ambiguous:
-        trusted = min(trusted, max(0, min(ambiguous) - TRIGGER_MARGIN))
+    for i in fuzzy:
+        if i < n:
+            conf[i] = min(conf[i], CONF_FUZZY)
+    for marks in (ambiguous, fuzzy):
+        if marks:
+            trusted = min(trusted, max(0, min(marks) - TRIGGER_MARGIN))
     if not (clocks_checked_end and _ends_the_game(moves_san)):
         tail_start = min(n - TAIL_PLIES, max(min(LATE_PLY, n - TAIL_PLIES), n - LATE_TAIL_PLIES))
         for i in range(max(0, tail_start), n):
