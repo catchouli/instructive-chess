@@ -36,6 +36,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("video_ids", nargs="*", help="video IDs or URLs (new videos welcome); default: every video in the catalog")
     ap.add_argument("--out", type=Path, required=True, help="merged catalog to write")
     ap.add_argument("--jobs", type=int, default=6)
+    ap.add_argument("--from-readings", action="store_true", help="pass --from-readings to scan.py (see there)")
     args = ap.parse_args(argv)
 
     games = json.loads(CATALOG.read_text())
@@ -56,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         part.write_text("[]\n")
         with open(work / f"{vid}.log", "w") as log:
             # -u: unbuffered, so the log shows progress while the scan runs
-            code = subprocess.call([str(PYTHON), "-u", str(SCAN), urls[vid], "--catalog", str(part)],
+            extra = ["--from-readings"] if args.from_readings else []
+            code = subprocess.call([str(PYTHON), "-u", str(SCAN), urls[vid], "--catalog", str(part), *extra],
                                    stdout=log, stderr=subprocess.STDOUT)
         return vid, code
 
