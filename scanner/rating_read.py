@@ -776,7 +776,10 @@ def read_ratings_beside_clocks(frame_bgr: np.ndarray, board_box, upper_clock, lo
         if cx < bx + bw and bx < cx + cw:
             return None
         x0 = bx + bw + 4 if cx > bx + bw else 0
-        return _rating_in_band(gray, cy - ch // 2, cy + ch, x0, cx - 2)
+        # glyph path and whole-line path combined (see _band_rating): on
+        # the current Naroditsky overlay the glyph path found nothing in
+        # "DanielNaroditsky (3163)" while the line read it exactly
+        return _band_rating(gray, cy - ch // 2, cy + ch, x0, cx - 2)
 
     top = band(upper_clock, True, lower_clock) or same_row(upper_clock)
     bottom = band(lower_clock, False, upper_clock) or same_row(lower_clock)
