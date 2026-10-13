@@ -145,6 +145,7 @@ and recalibrate as the library grows (it needed it once already).
 | Mover's clock = most common value between their move and the next ply | Most robust | Yes (`38d2053`) |
 | Read a low-contrast idle clock from inside its widget | One game's clock 46% → 100% of frames read | Yes (`0dd2ed5`) |
 | Grow clock boxes vertically; OCR-based candidate validation; coverage threshold 0.35 | 18 of 24 games missing a side fixed | Yes (`0d8a052`) |
+| Clock candidates pooled from the whole game window *and* its first four minutes | Over a long game other changing UI near a clock merged with it into one wide blob reading nothing (GingerGM stream: a side missing in 2 of 4 games); over the opening minutes it was found cleanly. Both sides found on the traced game | Yes |
 | Board exclusion margin in `find_clock_regions` 10 px → 3 px | chess.com's current layout puts the bottom clock 4 px under the board; the narrator's clock was missing in every game of the Titled Tuesday streams (clocks OK 8/22). Both clocks found on the traced game; existing clock tests unchanged | Yes |
 
 ## Ratings

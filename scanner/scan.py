@@ -39,6 +39,7 @@ CLOCK_MIN_COVERAGE = 0.35  # a candidate clock region must read at least this
 CLOCK_MAX_CANDIDATES = 4  # candidate regions screened per game; the best-reading two are kept
 CLOCK_SCREEN_FRAMES = 40  # frames each candidate is screened on before a full read
 RATING_BOX_SHIFTS = (-3, 0, 3)  # board-box offsets (scan pixels) each rating frame is read at
+CLOCK_EARLY_FRAMES = 240  # ...and from this many opening frames, where the clocks are easiest to find
 CLOCK_MIN_FRAMES = 20      # a window shorter than this can't bootstrap a
                            # wrap-anchor (see clock_read.py) reliably enough
                            # to be worth attempting at all
@@ -183,6 +184,14 @@ def _game_over_after(moves_san: list[str], n: int) -> bool:
     return board.is_checkmate() or board.is_stalemate()
 
 
+def _overlaps(a, b) -> bool:
+    """Do two clock boxes share most of the smaller one's area?"""
+    x0, y0 = max(a.x, b.x), max(a.y, b.y)
+    x1, y1 = min(a.x + a.w, b.x + b.w), min(a.y + a.h, b.y + b.h)
+    inter = max(0, x1 - x0) * max(0, y1 - y0)
+    return inter >= 0.5 * min(a.w * a.h, b.w * b.h)
+
+
 def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> None:
     """Best-effort: read each game's own on-screen clock(s) over just that
     game's video window - bounded memory regardless of how long the source
@@ -210,8 +219,19 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> Non
         # chosen clocks in full - OCR per frame is the slow part.
         step = max(1, len(frames) // CLOCK_SCREEN_FRAMES)
         sample_f, sample_t = frames[::step], times[::step]
+        # Over a long game other changing UI near a clock (a chat, a stream
+        # timer) can merge with it into one wide blob that reads nothing
+        # (confirmed on a stream: the top clock was found over the first
+        # four minutes and lost over the whole game). Pool the candidates
+        # from the whole window and from its opening minutes.
+        cands = list(clock_read.find_clock_regions(frames, board_box, max_regions=CLOCK_MAX_CANDIDATES))
+        if len(frames) > CLOCK_EARLY_FRAMES:
+            for cbox in clock_read.find_clock_regions(frames[:CLOCK_EARLY_FRAMES], board_box,
+                                                      max_regions=CLOCK_MAX_CANDIDATES):
+                if not any(_overlaps(cbox, c) for c in cands):
+                    cands.append(cbox)
         screened = [(cbox, clock_read.read_clock_ocr(sample_f, sample_t, cbox, reject_outliers=False))
-                    for cbox in clock_read.find_clock_regions(frames, board_box, max_regions=CLOCK_MAX_CANDIDATES)]
+                    for cbox in cands]
         chosen = clock_read.assign_clock_sides(screened, board_box, g.flipped, CLOCK_MIN_COVERAGE)
         box_for = {id(rd): cbox for cbox, rd in screened}
         if len(chosen) == 2:
