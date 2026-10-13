@@ -258,8 +258,11 @@ def test_clock_evidence_rejects_a_cancelled_premove():
     without_clock = run(readings)
     with_clock = run(readings, clock_by_side=clock_by_side)
 
-    assert without_clock[0].moves_san[-2:] == ["c3", "Qf6"]  # the artifact wins with no clock evidence
-    assert with_clock[0].moves_san[-2:] == ["c3", "Nf6"]     # clock evidence recovers the real move
+    # The artifact used to win without clock evidence; the lookahead now
+    # drops it on its own (the real placement follows from the position
+    # before it, not from after it), clocks or no clocks.
+    assert without_clock[0].moves_san[-2:] == ["c3", "Nf6"]
+    assert with_clock[0].moves_san[-2:] == ["c3", "Nf6"]
 
 
 def test_multi_ply_gap_is_bridged():
