@@ -32,6 +32,8 @@ GUESS_MAX_ROUTES = 3   # an ambiguous reading is still followed (route guessed) 
 GUESS_MAX_PLIES = 3    # at most this many routes of at most this many plies (a knight's
                        # route to one square); bigger tangles produced rook shuffles
 UNDO = True            # the undo check in reconstruct
+UNDO_WINDOW_S = 6.0    # a ply reverted within this long of appearing is taken back outright
+PREMOVE_MAX_DIFF = 6   # a premove drawn on a move changes at most this many squares
 OPEN_DEPTH = 5         # a video that skips the opening frames: accept an early
 OPEN_HAMMING = 16     # position implied uniquely from the standard start
 START_TOLERANCE = 1     # allowed mismatched squares when spotting a start position
@@ -432,6 +434,70 @@ def _pick_path(board: chess.Board, paths: list[list[chess.Move]], skipped: list[
     return paths[best[2]]
 
 
+def _without_premove(board: chess.Board, target: str) -> list[tuple[str, str]]:
+    """Ways to read *target* as a position plus a premove drawn on it:
+    [(target with the premoved piece put back, premove uci), ...].
+
+    A premove can sit on top of a real move - the player moves, then
+    premoves at once while the opponent thinks (traced on a stream: 4.e3
+    with Nbd2 premoved on the same frame, then 5.Nbd2 with exd4 premoved).
+    Any piece that left a square for one where it isn't a legal arrival is
+    a candidate; the caller keeps a candidate only if the rest explains
+    exactly."""
+    cur = _placement_of(board)
+    out = []
+    for a in range(64):
+        piece = cur[a]
+        if piece == "." or target[a] != ".":
+            continue
+        for b_ in range(64):
+            if b_ == a or target[b_] != piece or cur[b_] == piece:
+                continue
+            probe = board.copy(stack=False)
+            probe.turn = piece.isupper()        # the premover's own turn, to test the geometry
+            mv = chess.Move(_square_of(a), _square_of(b_))
+            if mv in probe.pseudo_legal_moves or _square_of(b_) in probe.attacks(_square_of(a)):
+                fixed = list(target)
+                fixed[a], fixed[b_] = piece, cur[b_]
+                out.append(("".join(fixed), mv.uci()))
+    return out
+
+
+def _lands_exactly(board: chess.Board, moves: list[chess.Move], target: str) -> bool:
+    b = board.copy(stack=False)
+    for mv in moves:
+        b.push(mv)
+    return _placement_of(b) == target
+
+
+def _explains_next(board: chess.Board, moves: list[chess.Move], following: str) -> bool:
+    """Can the next reading be reached from the position after *moves*
+    (directly, by legal moves, or with a premove drawn on it)?"""
+    b = board.copy(stack=False)
+    for mv in moves:
+        b.push(mv)
+    here = _placement_of(b)
+    if following == here:
+        return True
+    targets = [following] + [fixed for fixed, _ in _without_premove(b, following)]
+    for tgt in targets:
+        if tgt == here:
+            return True
+        if not _reachable(here, tgt):
+            continue
+        seq, _ = _find_sequence(b, tgt, MAX_DEPTH, NODE_BUDGET // 10)
+        if seq is not None and _lands_exactly(b, seq, tgt):
+            return True
+    return False
+
+
+def premove_is_white(premove: str, cur: str) -> bool:
+    """Colour of the premoved piece (by its origin square in `cur`)."""
+    sq = chess.parse_square(premove[:2])
+    i = (7 - chess.square_rank(sq)) * 8 + chess.square_file(sq)
+    return cur[i].isupper()
+
+
 def _premove_display(board: chess.Board, target: str) -> str | None:
     """If *target* is the current position with one piece of the side NOT to
     move displaced, the name of that premove (e.g. "a1d1"), else None.
@@ -649,15 +715,23 @@ def reconstruct(readings: list[tuple[float, str | None]],
             prev = chess.Board()
             for san in current.moves_san[:-1]:
                 prev.push_san(san)
-            cands = _single_ply_to(prev, target, 0)
-            if len(cands) == 1:
+            undo_seq = None
+            if _reachable(_placement_of(prev), target):
+                seq, _ = _find_sequence(prev, target, MAX_DEPTH)
+                if seq is not None and _lands_exactly(prev, seq, target):
+                    undo_seq = seq
+            if undo_seq:
                 note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} taken back")
                 retract_to(len(history) - 2)
-                current.moves_san.append(board.san(cands[0]))
-                current.move_seconds.append(ts)
-                board.push(cands[0])
-                history.append(_placement_of(board))
-                current.clean += 1
+                for mv in undo_seq:
+                    current.moves_san.append(board.san(mv))
+                    current.move_seconds.append(ts)
+                    board.push(mv)
+                    history.append(_placement_of(board))
+                if len(undo_seq) == 1:
+                    current.clean += 1
+                else:
+                    current.bridged += 1
                 misses, last_ts, browsing, skipped, undone_from = 0, ts, False, [], None
                 continue
 
@@ -674,6 +748,15 @@ def reconstruct(readings: list[tuple[float, str | None]],
         n = len(history) - 1
         earlier = [k for k in range(n) if history[k] == target]
         if earlier and (browsing or earlier[-1] == n - 1 or (n - earlier[-1]) % 2 == 0):
+            if earlier[-1] == n - 1 and not browsing and ts - current.move_seconds[-1] <= UNDO_WINDOW_S:
+                # the last ply was on screen only briefly before the board
+                # reverted: a move dragged and dropped back, or a cancelled
+                # premove (traced: "Rf4" shown for two seconds, then the
+                # board sat on the old position for ten). Not browsing.
+                note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} shown briefly, taken back")
+                retract_to(n - 1)
+                misses = 0
+                continue
             browsing = True
             if earlier[-1] == n - 1:
                 undone_from = n - 1
@@ -703,6 +786,44 @@ def reconstruct(readings: list[tuple[float, str | None]],
             alternatives: list = []
             moves, info = _find_sequence(board, target, MAX_DEPTH, budget, alternatives)
             guessed = False
+            guess_span = 0      # plies marked ambiguous beyond the moves taken now
+            if (moves is None or not _lands_exactly(board, moves, target)) \
+                    and _hamming(cur_placement, target) <= PREMOVE_MAX_DIFF:
+                # not explained exactly: maybe a premove is drawn on top of
+                # the real move(s) - put it back and try again. "4.e3 with
+                # Nbd2 premoved" and "4.Nbd2 with e3 premoved" both fit
+                # such a frame; the next reading tells them apart.
+                options = []
+                for fixed, premove in _without_premove(board, target):
+                    if fixed == cur_placement or not _reachable(cur_placement, fixed):
+                        continue
+                    alt_alternatives: list = []
+                    # one real ply only: the premover's own move, premoved on at
+                    # once. Allowing more let a noisy frame of "Nxc5+ Kb6" be
+                    # read as "Nxd4 cxd4 with b6 premoved" and lose the game.
+                    alt, alt_info = _find_sequence(board, fixed, 1, min(budget, NODE_BUDGET // 10), alt_alternatives)
+                    if alt is not None and _lands_exactly(board, alt, fixed):
+                        mover_white = (board.turn == chess.WHITE) == (len(alt) % 2 == 1)
+                        if mover_white == premove_is_white(premove, cur_placement):
+                            options.append((alt, alt_info, alt_alternatives, fixed, premove))
+                if len(options) > 1:
+                    following = next_state(ei)
+                    if following is not None:
+                        nxt_tgt = following[::-1] if current.flipped else following
+                        fits = [o for o in options if _explains_next(board, o[0], nxt_tgt)]
+                        if fits:
+                            options = fits
+                if options:
+                    alt, alt_info, alt_alternatives, fixed, premove = options[0]
+                    note(ts, f"premove {premove} drawn on top of the move(s)"
+                             + (f" ({len(options)} readings possible)" if len(options) > 1 else ""))
+                    moves, info, alternatives = alt, alt_info, alt_alternatives
+                    target = fixed
+                    if len(options) > 1:
+                        # which piece was the premove is a guess, so the order
+                        # of this move and the premove's later execution is
+                        # too: a transposition window, recorded as such
+                        guessed, guess_span = True, 2
             if moves is not None and len(alternatives) > 1:
                 chosen = _pick_path(board, alternatives, skipped)
                 if chosen is not None and chosen != moves:
@@ -718,7 +839,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 guessed = True
                 note(ts, f"ambiguous route, took {board.variation_san(moves)} of {len(alternatives)}")
         else:
-            moves, info, guessed = None, "unreachable", False
+            moves, info, guessed, guess_span = None, "unreachable", False, 0
         if moves is not None and _clock_contradicts_bridge(clock_by_side, board, moves, last_ts, ts):
             moves, info = None, "clock-contradicted"
         # A reading explained only by several plies at once deserves a second
@@ -743,6 +864,23 @@ def reconstruct(readings: list[tuple[float, str | None]],
                         slack = FUZZ if LOOKAHEAD_FUZZ else 0
                         if _hamming(_placement_of(b2), nxt_tgt) <= slack:
                             moves, info = None, "superseded"
+        if moves is None and UNDO and current.ply >= 1 and ts - current.move_seconds[-1] <= UNDO_WINDOW_S \
+                and current.move_seconds[-1] != (current.move_seconds[-2] if current.ply >= 2 else None):
+            # Unexplained right after a single ply appeared: was that ply a
+            # piece dragged over a square on its way elsewhere? (Traced: the
+            # c-pawn hovered over c4 for two seconds and was dropped on c3.)
+            # If a different single move from the previous position explains
+            # this reading exactly, the brief ply was no move at all.
+            prev = chess.Board()
+            for san in current.moves_san[:-1]:
+                prev.push_san(san)
+            cands = _single_ply_to(prev, target, 0)
+            if len(cands) == 1 and prev.san(cands[0]) != current.moves_san[-1]:
+                note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} was a piece passing through; "
+                         f"{prev.san(cands[0])} played")
+                retract_to(len(history) - 2)
+                moves, info = cands, "undo"
+
         if moves is None:
             # a noisy / mid-animation reading - step over it and try to resync
             misses += 1
@@ -760,7 +898,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
         undone_from = None
         note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(moves).split()[-len(moves) * 2:]))
         if guessed:
-            current.ambiguous.extend(range(current.ply, current.ply + len(moves)))
+            current.ambiguous.extend(range(current.ply, current.ply + len(moves) + guess_span))
         for mv in moves:
             current.moves_san.append(board.san(mv))
             current.move_seconds.append(ts)

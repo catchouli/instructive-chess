@@ -303,6 +303,8 @@ def _prefix(a: list[str], b: list[str], ambiguous: list[int] = ()) -> int:
             j = i
             while j + 1 < min(len(a), len(b)) and j + 1 in amb:
                 j += 1
+            if j + 1 < min(len(a), len(b)) and a[j + 1] != b[j + 1]:
+                break          # the run ends but the games still differ
             ba2, bb2 = ba.copy(), bb.copy()
             try:
                 for k in range(i + 1, j + 1):
