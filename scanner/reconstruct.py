@@ -396,6 +396,14 @@ def _with_lifted_king(board: chess.Board, target: str) -> str | None:
     return "".join(out) if changed else None
 
 
+def _same_moves(paths: list[list[chess.Move]]) -> bool:
+    """Do these routes play the same moves in different orders? A burst of
+    premoves (1.c4 e5 2.Nc3 Bb4 3.Nd5 ... four plies in two seconds) is
+    usually seen only as its result, and the orders are the only doubt."""
+    first = sorted(mv.uci() for mv in paths[0])
+    return len(first) <= MAX_DEPTH and all(sorted(mv.uci() for mv in p) == first for p in paths[1:])
+
+
 def _pick_path(board: chess.Board, paths: list[list[chess.Move]], skipped: list[str]) -> list[chess.Move] | None:
     """Among exact explanations of one reading, the one whose positions
     along the way best match the readings skipped since the last accepted
@@ -651,7 +659,14 @@ def reconstruct(readings: list[tuple[float, str | None]],
         return None
 
     misses = 0
-    for ei, (kind, ts, placement) in enumerate(events):
+    ei = -1
+    redo = 0      # re-examine the same reading from the new position (see the partial check)
+    while ei + 1 < len(events) or redo:
+        if redo:
+            redo -= 1
+        else:
+            ei += 1
+        kind, ts, placement = events[ei]
         if kind == "gap":
             close("gap")
             continue
@@ -829,8 +844,9 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 if chosen is not None and chosen != moves:
                     note(ts, f"skipped readings prefer {board.variation_san(chosen)} over {board.variation_san(moves)}")
                     moves = chosen
-            elif (moves is None and info == "ambiguous" and 2 <= len(alternatives) <= GUESS_MAX_ROUTES
-                  and max(len(p) for p in alternatives) <= GUESS_MAX_PLIES):
+            elif moves is None and info == "ambiguous" and len(alternatives) >= 2 and (
+                    (len(alternatives) <= GUESS_MAX_ROUTES and max(len(p) for p in alternatives) <= GUESS_MAX_PLIES)
+                    or _same_moves(alternatives)):
                 # Several routes, one destination (a burst of premoves: the
                 # knight reached e4 via d2 or c3, nobody saw which). The
                 # position is certain, so the game goes on from it; the
@@ -856,14 +872,24 @@ def reconstruct(readings: list[tuple[float, str | None]],
             if following is not None:
                 nxt_tgt = following[::-1] if current.flipped else following
                 if nxt_tgt != cur_placement and _reachable(cur_placement, nxt_tgt):
-                    short, _ = _find_sequence(board, nxt_tgt, len(moves) - 1)
+                    routes: list = []
+                    short, _ = _find_sequence(board, nxt_tgt, len(moves) - 1, NODE_BUDGET, routes)
+                    slack = FUZZ if LOOKAHEAD_FUZZ else 0
+                    fits = None
                     if short:
                         b2 = board.copy(stack=False)
                         for mv in short:
                             b2.push(mv)
-                        slack = FUZZ if LOOKAHEAD_FUZZ else 0
                         if _hamming(_placement_of(b2), nxt_tgt) <= slack:
-                            moves, info = None, "superseded"
+                            fits = short
+                    if fits is None:
+                        # several short routes (so no single answer) still
+                        # mean the next reading is reachable in fewer plies
+                        fits = next((r for r in routes if len(r) < len(moves) and _lands_exactly(board, r, nxt_tgt)), None)
+                    if fits is not None:
+                        note(ts, f"lookahead: the next reading is {board.variation_san(fits)} "
+                                 f"from here, not {board.variation_san(moves)} and on")
+                        moves, info = None, "superseded"
         if moves is None and UNDO and current.ply >= 1 and ts - current.move_seconds[-1] <= UNDO_WINDOW_S \
                 and current.move_seconds[-1] != (current.move_seconds[-2] if current.ply >= 2 else None):
             # Unexplained right after a single ply appeared: was that ply a
@@ -908,6 +934,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
             current.clean += 1
         else:
             current.bridged += 1
+        if isinstance(info, int) and info > len(moves) and _placement_of(board) != target:
+            # only the moves every route shared were taken (a burst of
+            # premoves: 3.Nd5 then Nc6-or-Na6 Nxb4 Nxb4); look at the same
+            # reading again from here, where what's left may be guessable
+            redo = 1
 
         # A detour: the board went ahead (or sideways) and came back to a
         # position already reached - confirmed on real recap videos, a
