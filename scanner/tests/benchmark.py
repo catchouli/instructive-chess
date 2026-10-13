@@ -519,7 +519,7 @@ def print_report(result: dict, show_all: bool) -> None:
             _summary(sub, indent="     ")
 
     pov = [r for r in m if r.get("pov_ok") is not None]
-    print(f"  Narrator side (pov) right          {_pct(sum(r['pov_ok'] for r in pov), len(pov))}")
+    print(f"  Narrator's colour detected right   {_pct(sum(r['pov_ok'] for r in pov), len(pov))}")
     wrong_pov = [r["id"] for r in pov if not r["pov_ok"]]
     if wrong_pov:
         print(f"           wrong: {' '.join(wrong_pov)}")

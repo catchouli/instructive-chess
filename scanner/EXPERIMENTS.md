@@ -117,6 +117,11 @@ Williams `Ginger_GM`. His video ZzwYoNjK6_Q: 8/8 games matched, 6 every
 move right, but **ratings 0/8** (small "(2533)" font; reads like 268, 3274)
 and clocks 4/8 - open.
 
+Whose move goes wrong first (174 matched games, live library + six blitz
+streams): the narrator's in 37 games, the opponent's in 22, with about the
+same number of plies each before it - the narrator's own premoves and drags
+are what the board draws, so their plies are ~1.7× as error-prone.
+
 ## Trusted moves (`trust.py`)
 
 Rule: stop two plies before a bunch of 3+ plies (or any bunch past ply 26),
