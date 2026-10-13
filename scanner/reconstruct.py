@@ -867,13 +867,28 @@ def reconstruct(readings: list[tuple[float, str | None]],
         # Qxc4). So if the very next reading is reached from the *current*
         # position by fewer plies than this bridge needs, this reading was
         # noise: skip it and let the next one tell the story.
-        if LOOKAHEAD and moves is not None and len(moves) >= 2:
+        partial = moves is not None and isinstance(info, int) and info > len(moves)   # a shared prefix of deeper routes
+        exact_now = moves is not None and _lands_exactly(board, moves, target)
+        if LOOKAHEAD and moves is not None and len(moves) == 1 and not exact_now and not partial:
+            # A single move accepted a square off: a frame caught mid-capture
+            # (traced: "Bb5" for the trade Qb5 Qxb5 Bxb5, one queen already
+            # gone). If the next reading follows exactly from *here* but not
+            # from after that move, the move wasn't played.
+            following = next_state(ei)
+            if following is not None:
+                nxt_tgt = following[::-1] if current.flipped else following
+                if nxt_tgt != cur_placement and _explains_next(board, [], nxt_tgt) \
+                        and not _explains_next(board, moves, nxt_tgt):
+                    note(ts, f"lookahead: the next reading follows from here, not from {board.variation_san(moves)}")
+                    moves, info = None, "superseded"
+        if LOOKAHEAD and moves is not None and (len(moves) >= 2 or partial):
             following = next_state(ei)
             if following is not None:
                 nxt_tgt = following[::-1] if current.flipped else following
                 if nxt_tgt != cur_placement and _reachable(cur_placement, nxt_tgt):
                     routes: list = []
-                    short, _ = _find_sequence(board, nxt_tgt, len(moves) - 1, NODE_BUDGET, routes)
+                    span = info if partial else len(moves)   # plies this reading claims
+                    short, _ = _find_sequence(board, nxt_tgt, span - 1, NODE_BUDGET, routes)
                     slack = FUZZ if LOOKAHEAD_FUZZ else 0
                     fits = None
                     if short:
@@ -885,7 +900,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                     if fits is None:
                         # several short routes (so no single answer) still
                         # mean the next reading is reachable in fewer plies
-                        fits = next((r for r in routes if len(r) < len(moves) and _lands_exactly(board, r, nxt_tgt)), None)
+                        fits = next((r for r in routes if len(r) < span and _lands_exactly(board, r, nxt_tgt)), None)
                     if fits is not None:
                         note(ts, f"lookahead: the next reading is {board.variation_san(fits)} "
                                  f"from here, not {board.variation_san(moves)} and on")
