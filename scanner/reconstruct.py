@@ -887,11 +887,13 @@ def reconstruct(readings: list[tuple[float, str | None]],
         # noise: skip it and let the next one tell the story.
         partial = moves is not None and isinstance(info, int) and info > len(moves)   # a shared prefix of deeper routes
         exact_now = moves is not None and _lands_exactly(board, moves, target)
-        if LOOKAHEAD and moves is not None and len(moves) == 1 and not exact_now and not partial:
-            # A single move accepted a square off: a frame caught mid-capture
-            # (traced: "Bb5" for the trade Qb5 Qxb5 Bxb5, one queen already
-            # gone). If the next reading follows exactly from *here* but not
-            # from after that move, the move wasn't played.
+        if LOOKAHEAD and moves is not None and not partial and (not exact_now or len(moves) >= 2):
+            # Moves accepted a square off, or several at once: a frame caught
+            # mid-capture (traced: "Bb5" for the trade Qb5 Qxb5 Bxb5 with one
+            # queen already gone), or a piece in hand plus the opponent's
+            # premove drawn ("Bf1 Bxf1", exactly, for Ba6 with Bf1 premoved).
+            # If the next reading follows exactly from *here* but not from
+            # after those moves, they weren't played.
             following = next_state(ei)
             if following is not None:
                 nxt_tgt = following[::-1] if current.flipped else following
