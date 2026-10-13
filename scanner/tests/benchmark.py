@@ -282,11 +282,36 @@ def parse_game(game: chess.pgn.Game | None) -> dict | None:
 
 # --- matching ---------------------------------------------------------------
 
-def _prefix(a: list[str], b: list[str]) -> int:
+def _prefix(a: list[str], b: list[str], ambiguous: list[int] = ()) -> int:
+    """Plies of *a* that match *b* from the start. A ply in *ambiguous* (a
+    route guessed among transpositions, see reconstruct.Game.ambiguous)
+    counts as matching if the *position* agrees again by the end of its
+    run - the moves' order was never observable, the position was."""
     n = 0
-    for x, y in zip(a, b):
-        if x != y:
+    amb = set(ambiguous)
+    ba, bb = chess.Board(), chess.Board()
+    for i, (x, y) in enumerate(zip(a, b)):
+        try:
+            ba.push_san(x)
+            bb.push_san(y)
+        except ValueError:
             break
+        if x != y:
+            if i not in amb:
+                break
+            # inside a guessed run: fine as long as the run ends on the real position
+            j = i
+            while j + 1 < min(len(a), len(b)) and j + 1 in amb:
+                j += 1
+            ba2, bb2 = ba.copy(), bb.copy()
+            try:
+                for k in range(i + 1, j + 1):
+                    ba2.push_san(a[k])
+                    bb2.push_san(b[k])
+            except ValueError:
+                break
+            if ba2.board_fen() != bb2.board_fen() or ba2.turn != bb2.turn:
+                break
         n += 1
     return n
 
@@ -326,7 +351,8 @@ def _aligned(a: list[str], b: list[str]) -> int:
 
 def match(game: dict, cands: list[dict]) -> tuple[dict | None, str]:
     moves = game["moves_san"]
-    scored = sorted(((_prefix(moves, c["moves_san"]), c.get("linked", False), c) for c in cands),
+    amb = game.get("ambiguous_plies", ())
+    scored = sorted(((_prefix(moves, c["moves_san"], amb), c.get("linked", False), c) for c in cands),
                     key=lambda t: (t[0], t[1]), reverse=True)
     if not scored:
         return None, "no candidate games"
@@ -364,7 +390,7 @@ def narrator_side(channel: str, real: dict) -> str | None:
 
 def score(game: dict, real: dict) -> dict:
     moves = game["moves_san"]
-    prefix = _prefix(moves, real["moves_san"])
+    prefix = _prefix(moves, real["moves_san"], game.get("ambiguous_plies", ()))
     trusted = game.get("trusted_ply", len(moves))
     res = {
         "trusted_ply": trusted,

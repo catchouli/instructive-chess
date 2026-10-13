@@ -27,6 +27,10 @@ MAX_PLIES = 400
 LOOKAHEAD_S = 12.0     # a multi-ply bridge is checked against the next reading
                        # this close (see the lookahead in reconstruct)
 LOOKAHEAD = True
+LOOKAHEAD_FUZZ = True  # the next reading may be FUZZ squares off its shorter explanation
+GUESS_MAX_ROUTES = 3   # an ambiguous reading is still followed (route guessed) when it has
+GUESS_MAX_PLIES = 3    # at most this many routes of at most this many plies (a knight's
+                       # route to one square); bigger tangles produced rook shuffles
 UNDO = True            # the undo check in reconstruct
 OPEN_DEPTH = 5         # a video that skips the opening frames: accept an early
 OPEN_HAMMING = 16     # position implied uniquely from the standard start
@@ -82,6 +86,11 @@ class Game:
     bridged: int = 0          # transitions resolved by a unique multi-move sequence
     skipped: int = 0          # readings stepped over as noise
     flipped: bool = False     # board was read with black at the bottom
+    # plies whose exact moves are a guess among routes to the same position
+    # (3.Nd2 dxe4 4.Nxe4 or 3.Nc3 dxe4 4.Nxe4, both seen only as the
+    # result) - the position is certain, the move order isn't; trust.py
+    # never trusts these
+    ambiguous: list[int] = field(default_factory=list)
 
     @property
     def ply(self) -> int:
@@ -256,7 +265,8 @@ def _has_wasted_round_trip(board: chess.Board, path: list[chess.Move]) -> bool:
     return any(cur == orig for cur, orig in origin.items())
 
 
-def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int = NODE_BUDGET):
+def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int = NODE_BUDGET,
+                   alternatives: list | None = None):
     """Moves from *board* that we can be sure of on the way to placement *target*.
 
     An exact match (hamming 0) at any depth always wins over a merely-close one
@@ -276,10 +286,16 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
 
     Returns (moves, depth) with a unique/shared-prefix move list, or
     (None, reason) where reason is 'none', 'ambiguous' or 'budget'.
+
+    With `alternatives` (a list), every exact path found at the winning
+    depth and one ply deeper is appended to it - a transposition (Bh6 Qf6
+    Bg5 and Bg5 Qf6 reach the same position) is only told apart by the
+    readings skipped on the way, see _pick_path.
     """
     relevant = _relevant_squares(_placement_of(board), target)
     frontier = [(board.copy(stack=False), [])]
     fallback: tuple[int, list[chess.Move]] | None = None
+    winner = None            # (moves, depth) once exact paths are found
     for depth in range(1, max_depth + 1):
         nxt = []
         exact = []                        # paths reaching hamming == 0
@@ -290,6 +306,8 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
                     continue               # can't help - prune (see _relevant_squares)
                 budget -= 1
                 if budget <= 0:
+                    if winner is not None:
+                        return winner     # the extra depth was only for alternatives
                     if fallback:
                         return fallback[1], fallback[0]
                     return None, "budget"
@@ -307,13 +325,24 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
                 b.pop()
         if exact:
             exact = [p for p in exact if not _has_wasted_round_trip(board, p)]
+        if exact and alternatives is not None:
+            alternatives.extend(exact)
+        if winner is not None:
+            return winner                 # the extra depth was only for alternatives
         if exact:
             if len(exact) == 1:
-                return exact[0], depth
-            shared = _common_prefix(exact)
-            if shared:
-                return shared, depth      # only the moves every candidate agrees on
-            return None, "ambiguous"
+                winner = exact[0], depth
+            else:
+                shared = _common_prefix(exact)
+                if shared:
+                    winner = shared, depth    # only the moves every candidate agrees on
+                else:
+                    return None, "ambiguous"
+            if alternatives is None or depth == max_depth or not nxt:
+                return winner
+            budget = min(budget, NODE_BUDGET // 10)   # the alternatives are a cheap extra
+            frontier = nxt
+            continue
         if fuzzy and fallback is None:
             best = min(h for h, _ in fuzzy)
             cand = [p for h, p in fuzzy if h == best]
@@ -323,6 +352,8 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
         frontier = nxt
         if not frontier:
             break
+    if winner is not None:
+        return winner
     if fallback:
         return fallback[1], fallback[0]
     return None, "none"
@@ -337,6 +368,68 @@ def _single_ply_to(board: chess.Board, target: str, tolerance: int) -> list[ches
             out.append(mv)
         board.pop()
     return out
+
+
+def _with_lifted_king(board: chess.Board, target: str) -> str | None:
+    """*target* with a missing king put back on its current square, or None
+    if nothing is missing.
+
+    A piece being dragged is drawn nowhere, and a player can hold a piece
+    for seconds while the opponent moves (a premove by drag - confirmed on a
+    Titled Tuesday stream: the king vanished from e1 for six seconds while
+    Black played on, and every reading in between failed the king count in
+    _reachable until the game was lost). Any other lifted piece just reads
+    as a capture-less disappearance and is skipped harmlessly; a missing
+    king is the one case that blocks the search outright."""
+    cur = _placement_of(board)
+    out = list(target)
+    changed = False
+    for king in "Kk":
+        if king in target:
+            continue
+        sq = cur.find(king)
+        if sq >= 0 and target[sq] == ".":
+            out[sq] = king
+            changed = True
+    return "".join(out) if changed else None
+
+
+def _pick_path(board: chess.Board, paths: list[list[chess.Move]], skipped: list[str]) -> list[chess.Move] | None:
+    """Among exact explanations of one reading, the one whose positions
+    along the way best match the readings skipped since the last accepted
+    one; None when the readings don't prefer any.
+
+    The shortest legal path to a position isn't always the one played:
+    Bh6 Qf6 Bg5 reads, from the positions alone, just like Bg5 Qf6, and a
+    king walking g7-f6-e5 around a knight check like Ke5 straight away
+    (both traced on real games, both recorded wrongly). But the frames in
+    between - a square or two off the real intermediate positions, so
+    skipped - do tell them apart. Each skipped reading votes for the path
+    with an intermediate position nearest to it."""
+    # Only readings that moved on from the current position by more than
+    # one move's worth count: a frame caught mid-animation shows the piece
+    # part way (a pawn passing g3 on its way to g4 reads exactly like "g3"
+    # played) and would vote for a detour that never happened.
+    cur = _placement_of(board)
+    evidence = [r for r in skipped if _hamming(r, cur) >= 3]
+    if len(paths) < 2 or not evidence:
+        return None
+    scores = []
+    for path in paths:
+        b = board.copy(stack=False)
+        along = []                 # every position on the way, the final one included:
+        for mv in path:            # a noisy early frame of the target itself must
+            b.push(mv)             # count for the direct route too
+            along.append(_placement_of(b))
+        scores.append(sum(min(_hamming(r, m) for m in along) for r in evidence))
+    ranked = sorted(zip(scores, [len(p) for p in paths], range(len(paths))))
+    best, second = ranked[0], ranked[1]
+    # a clear preference, and the readings must actually fit the winner (a
+    # square off each at most) - a premove display or a cancelled move in
+    # the skipped readings fits neither route and must not decide
+    if best[0] > len(evidence) or second[0] - best[0] < 2:
+        return None
+    return paths[best[2]]
 
 
 def _premove_display(board: chess.Board, target: str) -> str | None:
@@ -463,20 +556,22 @@ def reconstruct(readings: list[tuple[float, str | None]],
     # mid-game - see the browsing check in the loop below.
     history: list[str] = []
     browsing = False
+    skipped: list[str] = []        # readings stepped over since the last accepted one (see _pick_path)
     undone_from: int | None = None  # ply count the board just reverted to (see the undo check)
 
     def close(why: str = ""):
-        nonlocal current, board, history, browsing, undone_from
+        nonlocal current, board, history, browsing, skipped, undone_from
         if current:
             note(last_ts, f"close {why}: {current.ply} plies, {current.skipped} skipped")
         if current and current.ply >= 2:
             games.append(current)
         current, board = None, None
-        history, browsing, undone_from = [], False, None
+        history, browsing, skipped, undone_from = [], False, [], None
 
     def retract_to(k: int) -> None:
         nonlocal board
         del current.moves_san[k:], current.move_seconds[k:], history[k + 1:]
+        current.ambiguous = [i for i in current.ambiguous if i < k]
         board = chess.Board()
         for san in current.moves_san:
             board.push_san(san)
@@ -532,9 +627,14 @@ def reconstruct(readings: list[tuple[float, str | None]],
 
         target = placement[::-1] if current.flipped else placement
         cur_placement = _placement_of(board)
+        repaired = _with_lifted_king(board, target)
+        if repaired is not None:
+            note(ts, "king lifted: assumed still on its square")
+            target = repaired
         if target == cur_placement:
             misses = 0
             browsing = False
+            skipped = []
             undone_from = None
             continue
 
@@ -558,7 +658,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 board.push(cands[0])
                 history.append(_placement_of(board))
                 current.clean += 1
-                misses, last_ts, browsing, undone_from = 0, ts, False, None
+                misses, last_ts, browsing, skipped, undone_from = 0, ts, False, [], None
                 continue
 
         # The viewer stepping back through the move list mid-game (confirmed
@@ -600,9 +700,25 @@ def reconstruct(readings: list[tuple[float, str | None]],
             # every frame), and burning the full budget on every further
             # reading made one blitz stream take an hour to reconstruct.
             budget = NODE_BUDGET if misses < 2 else NODE_BUDGET // 4 if misses < 5 else NODE_BUDGET // 20
-            moves, info = _find_sequence(board, target, MAX_DEPTH, budget)
+            alternatives: list = []
+            moves, info = _find_sequence(board, target, MAX_DEPTH, budget, alternatives)
+            guessed = False
+            if moves is not None and len(alternatives) > 1:
+                chosen = _pick_path(board, alternatives, skipped)
+                if chosen is not None and chosen != moves:
+                    note(ts, f"skipped readings prefer {board.variation_san(chosen)} over {board.variation_san(moves)}")
+                    moves = chosen
+            elif (moves is None and info == "ambiguous" and 2 <= len(alternatives) <= GUESS_MAX_ROUTES
+                  and max(len(p) for p in alternatives) <= GUESS_MAX_PLIES):
+                # Several routes, one destination (a burst of premoves: the
+                # knight reached e4 via d2 or c3, nobody saw which). The
+                # position is certain, so the game goes on from it; the
+                # route is recorded as a guess that trust.py never shows.
+                moves = _pick_path(board, alternatives, skipped) or min(alternatives, key=len)
+                guessed = True
+                note(ts, f"ambiguous route, took {board.variation_san(moves)} of {len(alternatives)}")
         else:
-            moves, info = None, "unreachable"
+            moves, info, guessed = None, "unreachable", False
         if moves is not None and _clock_contradicts_bridge(clock_by_side, board, moves, last_ts, ts):
             moves, info = None, "clock-contradicted"
         # A reading explained only by several plies at once deserves a second
@@ -624,12 +740,14 @@ def reconstruct(readings: list[tuple[float, str | None]],
                         b2 = board.copy(stack=False)
                         for mv in short:
                             b2.push(mv)
-                        if _placement_of(b2) == nxt_tgt:
+                        slack = FUZZ if LOOKAHEAD_FUZZ else 0
+                        if _hamming(_placement_of(b2), nxt_tgt) <= slack:
                             moves, info = None, "superseded"
         if moves is None:
             # a noisy / mid-animation reading - step over it and try to resync
             misses += 1
             current.skipped += 1
+            skipped.append(target)
             note(ts, f"skip ({info}; {_hamming(cur_placement, target)} squares off) miss {misses}")
             if misses >= MAX_MISSES:
                 close("too many misses")
@@ -638,8 +756,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
         misses = 0
         last_ts = ts
         browsing = False
+        skipped = []
         undone_from = None
         note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(moves).split()[-len(moves) * 2:]))
+        if guessed:
+            current.ambiguous.extend(range(current.ply, current.ply + len(moves)))
         for mv in moves:
             current.moves_san.append(board.san(mv))
             current.move_seconds.append(ts)

@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {ts:8.1f}  {m}")
 
     for i, g in enumerate(games):
-        entry = {"moves_san": g.moves_san}
+        entry = {"moves_san": g.moves_san, "ambiguous_plies": list(g.ambiguous)}
         real, why = benchmark.match(entry, cands) if cands else (None, "no truth")
         line = f"\ngame {i + 1}: t={int(g.start_seconds)}s {g.ply} plies conf={g.confidence:.2f} skipped={g.skipped}"
         if real is None:
@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             print("   " + g.pgn()[:200])
             points = [g.move_seconds[-1]] if g.move_seconds else []
         else:
-            p = benchmark._prefix(g.moves_san, real["moves_san"])
+            p = benchmark._prefix(g.moves_san, real["moves_san"], g.ambiguous)
             print(f"{line}  real {len(real['moves_san'])} plies ({real['white']} v {real['black']}), "
                   f"{'all right' if p == g.ply else f'first wrong ply {p + 1}: got {g.moves_san[p]} real {real['moves_san'][p] if p < len(real['moves_san']) else '-'}'}")
             points = []

@@ -313,30 +313,59 @@ def calibrate_from_start(frame_bgr: np.ndarray, box, tolerance: int = 6):
     return model, box
 
 
-def near_start(placement: str, tolerance: int = 10) -> bool:
-    """Does this reading look like the opening position in either
-    orientation, allowing for a few squares misread (a shifted box)?"""
-    return min(_hamming_str(placement, _START), _hamming_str(placement, _START_FLIPPED)) <= tolerance
+def start_error(placement: str) -> int:
+    """Squares off the opening position, in the better orientation."""
+    return min(_hamming_str(placement, _START), _hamming_str(placement, _START_FLIPPED))
 
 
-def retune_at_start(frame_bgr: np.ndarray, box, model: "BoardModel"):
+def looks_like_start_reading(placement: str, max_err: int = 24) -> bool:
+    """Does this reading have the *shape* of the opening position - the
+    back ranks full, the middle empty - even if a badly placed box left
+    many of its pieces unread (a real stream: 14 pieces, 18 squares off)?
+    A position ten plies in is also within 24 of the start, but has
+    pieces in the middle; that's what keeps the (slow) re-fit off it."""
+    middle = sum(ch != "." for ch in placement[16:48])
+    ends = sum(ch != "." for ch in placement[:16]) + sum(ch != "." for ch in placement[48:])
+    return middle <= 2 and ends >= 12 and start_error(placement) <= max_err
+
+
+_RETUNE_COARSE = [(dx, dy, ds) for dx in (-8, -4, 0, 4, 8) for dy in (-8, -4, 0, 4, 8) for ds in (-8, -4, 0, 4, 8)]
+_RETUNE_FINE = [(dx, dy, ds) for dx in (-2, 0, 2) for dy in (-2, 0, 2) for ds in (-2, 0, 2) if (dx, dy, ds) != (0, 0, 0)]
+_RETUNE_MAX_ERR = 2   # a re-fitted box must read the opening (nearly) perfectly
+
+
+def retune_at_start(frame_bgr: np.ndarray, box, model: "BoardModel", known_err: int | None = None):
     """At a frame showing the opening position, re-fit the board box and
-    return it if it reads the position better than the current box does.
+    return it if it reads the position (nearly) perfectly and better than
+    the current box does.
 
-    A stream's layout can shift between games (confirmed on a real video:
-    the board moved 12 px up and 4 px left between round 1 and round 2, and
-    with the old box every square matched at 0.1-0.5 instead of 0.9, so a
-    bishop went unread all game and the game was lost after four plies).
-    Re-fitting on a confidence drop was tried and thrashed (see
-    EXPERIMENTS.md); a start position is a safe, once-per-game moment, and
-    the better reading of the known position is the proof."""
-    cand = autotune_box(frame_bgr, box)
-    if cand.as_tuple() == box.as_tuple():
-        return box
-    def err(b):
+    A stream's layout can shift between games (confirmed on real videos:
+    4-12 px, and with the old box squares matched at 0.1-0.5 instead of
+    0.9 - a bishop went unread all game, or half the pieces did - and the
+    game was lost within a few plies). Re-fitting on a confidence drop was
+    tried and thrashed (see EXPERIMENTS.md); a start position is a safe,
+    once-per-game moment, and the reading of the known position is the
+    score: the alignment cost autotune_box uses preferred a box reading 14
+    pieces over one reading 30 on a real frame. Coarse grid, then fine."""
+    from board_detect import Box
+
+    def score(b):
         rd = read_board(frame_bgr, b, model)
-        return min(_hamming_str(rd.placement, _START), _hamming_str(rd.placement, _START_FLIPPED))
-    return cand if err(cand) < err(box) else box
+        return start_error(rd.placement), -rd.confidence
+
+    base = score(box) if known_err is None else (known_err, 0.0)
+    if base[0] == 0:
+        return box
+    best, best_score = box, base
+    x, y, w, h = box.as_tuple()
+    for grid in (_RETUNE_COARSE, _RETUNE_FINE):
+        bx, by, bw, bh = best.as_tuple()
+        for dx, dy, ds in grid:
+            b = Box(bx + dx, by + dy, bw + ds, bh + ds, score=0.0)
+            sc = score(b)
+            if sc < best_score:
+                best, best_score = b, sc
+    return best if best_score[0] < base[0] and best_score[0] <= _RETUNE_MAX_ERR else box
 
 
 def _hamming_str(a: str, b: str) -> int:
