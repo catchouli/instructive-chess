@@ -11,6 +11,7 @@ web/data/games.json for the static web app.
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -421,6 +422,11 @@ def main(argv: list[str]) -> int:
     if model is None:
         print("      never saw an opening position - no games recorded", file=sys.stderr)
         return 3
+    if not args.start and not args.end and download._looks_like_url(src.url):
+        # keep the raw readings: reconstruction can then be re-run or traced
+        # (tests/trace_video.py) without reading the frames again
+        (download.CACHE / f"{src.video_id}-readings.json").write_text(
+            json.dumps({"box": box.as_tuple(), "fps": args.fps, "readings": readings}))
     print(f"      {len(readings)} frames, {sum(1 for _, p in readings if p)} with a readable board")
 
     print("[4/6] reconstructing games")
