@@ -390,6 +390,7 @@ def _hamming_str(a: str, b: str) -> int:
     return sum(1 for x, y in zip(a, b) if x != y)
 
 
+_CLIPPED_DIFF = 30.0      # a blob-less square this far from the empty template is worth a shifted look
 _SHIFT_MIN_SIM = 0.7      # a shifted re-match must be strong (the real case: 0.83)...
 _SHIFT_CENTRE_TOL = 0.12  # ...with the piece centred in the shifted crop
 _SHIFTS = [(dx, dy) for dx in (-4, -2, 0, 2, 4) for dy in (-4, -2, 0, 2, 4) if (dx, dy) != (0, 0)]
@@ -446,7 +447,14 @@ def _classify_cell(frame_bgr: np.ndarray, box, r: int, c: int, cell: np.ndarray,
         # no blob at all - without this, ZNCC falls back to the *template's*
         # mask below and can score a spurious match against plain background
         # texture (wood grain, a shadow, a stray cursor) with nothing of its
-        # own to disprove it
+        # own to disprove it. But a square this unlike an empty one with no
+        # blob *inside the crop* may hold a piece the crop clips (confirmed:
+        # a knight on a8 with the box a few pixels off read empty all game
+        # at frac 0.04, and matched at 0.97 once shifted) - retry shifted.
+        if shift and diff > _CLIPPED_DIFF:
+            k, best = _shifted_match(frame_bgr, box, r, c, model)
+            if best >= max(model.match_thresh, _SHIFT_MIN_SIM):
+                return model.piece_of[k], best
         return ".", None
     eff = np.maximum(model.masks, mask[None])
     sims = _zncc_many(patch, model.temps, eff)
