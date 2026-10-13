@@ -124,6 +124,7 @@ and recalibrate as the library grows (it needed it once already).
 | Four glyphs between parens = four digits | "(2742)" no longer 742 | Yes (`ee62d37`) |
 | ...expected digits from span *width* | Font-dependent; "(150)" read as 1150 | **No** |
 | Drop a 3-digit rating paired 700+ below a 4-digit one | Partial reads become missing, not wrong | Yes (`ebda1a0`) |
+| Per-video reconciliation using the narrator's side (`catalog.reconcile_ratings`): the narrator's rating is one account all video long, so a read >250 from the video's median (of 4-digit reads, when two exist) is blanked; a narrator at 1500+ isn't paired with an opponent under 1000 | 14 wrong reads blanked, 0 right ones lost: wrong sides 32 → 18 of 272 (11.8% → 6.6%). Taking the median over *all* reads blanked a right 2747 on the blurry BdcY0WCN29Y (junk outnumbered real reads) | Yes |
 | Tesseract digit whitelist | No change | No |
 | Contrast stretch / CLAHE fallbacks | Didn't help; CLAHE produced garbage | **No** |
 

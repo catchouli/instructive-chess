@@ -23451,7 +23451,6 @@
       70,
       70
     ],
-    "rating_white": 172,
     "move_confidence": [
       0.996,
       0.996,
@@ -25721,8 +25720,6 @@
       27,
       26
     ],
-    "rating_white": 261,
-    "rating_black": 261,
     "move_confidence": [
       0.996,
       0.99,
@@ -28486,8 +28483,6 @@
       20,
       20
     ],
-    "rating_white": 192,
-    "rating_black": 431,
     "move_confidence": [
       0.996,
       0.996,
@@ -29181,8 +29176,6 @@
       22,
       22
     ],
-    "rating_white": 242,
-    "rating_black": 152,
     "move_confidence": [
       0.996,
       0.996,
@@ -29521,8 +29514,6 @@
       21,
       21
     ],
-    "rating_white": 392,
-    "rating_black": 331,
     "move_confidence": [
       0.996,
       0.996,
@@ -29875,7 +29866,6 @@
       26,
       26
     ],
-    "rating_white": 411,
     "move_confidence": [
       0.996,
       0.996,
@@ -30121,8 +30111,6 @@
       61,
       61
     ],
-    "rating_white": 762,
-    "rating_black": 198,
     "move_confidence": [
       0.996,
       0.99,
@@ -30544,8 +30532,6 @@
       23,
       23
     ],
-    "rating_white": 441,
-    "rating_black": 100,
     "move_confidence": [
       0.996,
       0.996,

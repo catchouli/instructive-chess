@@ -55,7 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         part = work / f"{vid}.json"
         part.write_text("[]\n")
         with open(work / f"{vid}.log", "w") as log:
-            code = subprocess.call([str(PYTHON), str(SCAN), urls[vid], "--catalog", str(part)],
+            # -u: unbuffered, so the log shows progress while the scan runs
+            code = subprocess.call([str(PYTHON), "-u", str(SCAN), urls[vid], "--catalog", str(part)],
                                    stdout=log, stderr=subprocess.STDOUT)
         return vid, code
 
