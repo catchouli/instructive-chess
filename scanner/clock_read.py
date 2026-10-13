@@ -75,6 +75,9 @@ class ClockBox:
         return frame_bgr[self.y:self.y + self.h, self.x:self.x + self.w]
 
 
+_BOARD_MARGIN = 3   # see find_clock_regions
+
+
 def find_clock_regions(frames: list[np.ndarray], board_box, max_regions: int = 2) -> list[ClockBox]:
     """Locate up to `max_regions` candidate clock widgets (largest first) from
     a sequence of frames spaced ~1s apart, spanning at least a a minute or so of real gameplay (so both
@@ -87,10 +90,14 @@ def find_clock_regions(frames: list[np.ndarray], board_box, max_regions: int = 2
 
     mask = ((freq > _CHANGE_LO) & (freq < _CHANGE_HI)).astype(np.uint8) * 255
     bx, by, bw, bh = board_box.as_tuple() if hasattr(board_box, "as_tuple") else board_box
-    pad = 10
+    # exclude the board itself - a piece moving looks like "change" too. Only
+    # a sliver beyond it: chess.com's current layout puts the bottom clock
+    # 4 px under the board (confirmed on a Titled Tuesday stream, where a
+    # 10 px margin swallowed the narrator's clock in every game)
+    pad = _BOARD_MARGIN
     y0, y1 = max(0, by - pad), by + bh + pad
     x0, x1 = max(0, bx - pad), bx + bw + pad
-    mask[y0:y1, x0:x1] = 0    # exclude the board itself - a piece moving looks like "change" too
+    mask[y0:y1, x0:x1] = 0
 
     # bridge a single ticking digit into the full "M:SS" label's width
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 25), np.uint8))
@@ -211,6 +218,14 @@ def find_clock_regions(frames: list[np.ndarray], board_box, max_regions: int = 2
                 px0 = max(px0, bx + bw + 2)
             elif (px0 + px1) / 2 < bx:
                 px1 = min(px1, bx - 2)
+            # ...and a clock right under (or over) the board, grown to its
+            # text height, can take in the board's bottom edge the same way
+            # (confirmed: one value in 19 misread once the exclusion margin
+            # let the box reach the edge)
+            elif (py0 + py1) / 2 > by + bh:
+                py0 = max(py0, by + bh + 2)
+            elif (py0 + py1) / 2 < by:
+                py1 = min(py1, by - 2)
         cands.append((area, ClockBox(px0, py0, px1 - px0, py1 - py0)))
     cands.sort(key=lambda t: -t[0])
     return [box for _, box in cands[:max_regions]]
