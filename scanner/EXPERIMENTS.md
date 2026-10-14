@@ -56,16 +56,23 @@ Tuesday" streams), Daniel Naroditsky (`danielnaroditsky`), John Bartholomew
 
 ## Current state (2026-10-14)
 
-Live catalog: **202 games from 59 videos** (the 51 earlier videos plus eight
-Titled Tuesday streams by Rosen, Naroditsky, Bartholomew and GingerGM),
-194 matched to real games: **0 wrong trusted moves** (of 5,758 trusted
-plies), whole 15-move opening trusted in 45%, every move right in 63%,
-clocks right in 86%, both ratings right in 81%, the narrator's colour
-detected right in 100%. The eight blitz streams alone (59 games): every
-move right 55%, clocks 76%, ratings 93%, openings trusted 25% - the trust
-rule was calibrated on speedruns and cuts early on blitz (see the trust
-table; a recalibration is pending the library rescan). The earlier videos
-have not yet been rescanned with today's reconstruction fixes.
+Live catalog: **220 games from 59 videos** (the 51 earlier videos, all but
+one rescanned with the blitz-stream fixes, plus eight Titled Tuesday
+streams by Rosen, Naroditsky, Bartholomew and GingerGM), 209 matched to
+real games: **0 wrong trusted moves** (of 5,458 trusted plies), the whole
+15-move opening trusted in 43%, every move right in 70%, clocks right in
+78%, both ratings right in 80%, the narrator's colour detected right in
+100%. Correct plies 8,439 → 8,992 on the games the library had before.
+
+Open after the rescan: clocks fell from 86% to 78% of games - 13 games
+lost it, mostly games that are now much longer (their late clock values
+are wrong) and ~15 speedrun games that got *shorter*: a piece hovered
+over a square for a second or two now survives the 3-frame vote and a
+fuzzy single move from it starts a self-consistent wrong chain (traced:
+97PgPqdci_U game 2 "Bc4" for Bb5+ Bd7 Bc4, 77 → 4 right plies;
+Re5ZPpEMPHk game 1, 75 → 15). Requiring the next reading to follow from
+the fuzzy move didn't catch them (the chain explains the next frames too).
+Net the rescan gained plies in 29 games and lost them in 15.
 
 ## Earlier state (2026-09-24)
 
