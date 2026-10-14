@@ -22,15 +22,23 @@ ends in mate. Recalibrated 2026-09-25 on 136 benchmarked games (more found
 after recognition fixes): late-bunch threshold 30 -> 26 and a 2-ply margin
 before a trigger bunch, for 0 games with a wrong trusted move (the old
 settings left 3: two wrong early pairs, one misread two plies before a
-bunch), trusting 68% of plies. Tuned on the games it's measured on - expect
-a small error rate on new ones, and recheck as the library grows.
+bunch), trusting 68% of plies. Recalibrated again 2026-10-14 on 209 games
+(the library rescanned with the blitz-stream fixes plus eight Titled
+Tuesday streams): bunches accepted from a reading a square off (`fuzzy`)
+are wrong 5% of the time even when the next move is seen exactly, so they
+end trust; exact pairs early are wrong 0.3% of the time (288 right, 1
+wrong) and pairs between plies 26 and 34 added no error, so the late
+threshold went back up to 34: 0 wrong of 5,329 trusted plies, the whole
+15-move opening trusted in 87 games instead of 71. Tuned on the games
+it's measured on - expect a small error rate on new ones, and recheck as
+the library grows.
 """
 from __future__ import annotations
 
 import chess
 
 BIG_BUNCH = 3          # plies confirmed in one reading that end trust
-LATE_PLY = 26          # past here, any bunch (2+) ends trust
+LATE_PLY = 34          # past here, any bunch (2+) ends trust
 TRIGGER_MARGIN = 2     # trust ends this many plies before such a bunch
 TAIL_PLIES = 2         # always hold back this many final plies (unless mate)
 LATE_TAIL_PLIES = 4    # ...and this many, past LATE_PLY

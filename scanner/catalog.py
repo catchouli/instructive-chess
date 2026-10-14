@@ -182,9 +182,9 @@ def write(entries: list[dict], path: Path = DATA_FILE) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Re-derive the `pov` and `speedrun` tags for every entry of a catalog
-    and blank implausible ratings (see reconcile_ratings) - all from fields
-    already stored, so no rescan is needed:
+    """Re-derive the `pov` and `speedrun` tags, the per-move trust (trust.py)
+    and blank implausible ratings (see reconcile_ratings) for every entry of
+    a catalog - all from fields already stored, so no rescan is needed:
 
         scanner/.venv/bin/python scanner/catalog.py [--catalog PATH] [--speedrun VIDEO_ID ...]
                                                      [--no-speedrun VIDEO_ID ...]
@@ -199,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     for e in entries:
         override = True if e["video_id"] in args.speedrun else False if e["video_id"] in args.no_speedrun else None
         tag(e, override)
+        add_trust(e)
         by_video.setdefault(e["video_id"], []).append(e)
     blanked = sum(reconcile_ratings(v) for v in by_video.values())
     write(entries, args.catalog)

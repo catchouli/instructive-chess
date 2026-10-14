@@ -149,6 +149,7 @@ and recalibrate as the library grows (it needed it once already).
 | Stop where the mover's clock *rose* | Fires on increment games (600+8) too; cost 6 openings, caught 1 error | **No** |
 | Flag moves after which the mover's clock kept running | Flagged 19 all-correct games, caught 13 of 38 errors | **No** |
 | Recalibrate on 136 games (after recognition fixes found more): trust 2-ply bunches only before ply 26 (was 30), cut 2 plies before a trigger bunch (was 1) | Old rule left 3 games wrong (two wrong early pairs, one misread 2 plies before a bunch); new: 0 wrong of 4,630 trusted plies, full openings 73/136 | Yes |
+| Recalibrate on 209 games (library rescanned with the blitz fixes + 8 Titled Tuesday streams, 2026-10-14). Per ply: exact singles early 0 wrong of 1,100+, exact pairs early 288/1, 3-bunches early 76/5 (+3 at the tail), late pairs 439/12, late 3-bunches 96/4; **fuzzy** bunches (accepted a square off) early 56 right/5 wrong, late 78/16; ambiguous (guessed routes) 55/0 early, 28/2 late | Keep BIG_BUNCH 3; fuzzy and ambiguous bunches end trust (dropping the fuzzy rule would add 23-29 openings but leak 16 plies in one game, and the per-run error rate says more would follow); LATE_PLY 26 → 34: 0 wrong of 5,329, openings 71 → 87 of 209 | Yes |
 
 ## Clocks
 
