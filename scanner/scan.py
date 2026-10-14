@@ -39,6 +39,10 @@ CLOCK_MIN_COVERAGE = 0.35  # a candidate clock region must read at least this
 CLOCK_MAX_CANDIDATES = 4  # candidate regions screened per game; the best-reading two are kept
 CLOCK_SCREEN_FRAMES = 40  # frames each candidate is screened on before a full read
 RATING_BOX_SHIFTS = (-3, 0, 3)  # board-box offsets (scan pixels) each rating frame is read at
+RETUNE_MIN_ERR = 4         # re-fit the board box only when the opening reads this many
+                           # squares off: a board that really moved read 12 off; at 1-2
+                           # (a highlight, the cursor) re-fitting moved a good box to a
+                           # worse one and cost two games 60 and 25 correct plies
 CLOCK_EARLY_FRAMES = 240  # ...and from this many opening frames, where the clocks are easiest to find
 CLOCK_MIN_FRAMES = 20      # a window shorter than this can't bootstrap a
                            # wrap-anchor (see clock_read.py) reliably enough
@@ -148,7 +152,8 @@ def read_frames(frames, box, log=lambda msg: None):
                 f"{len(model.piece_of)} templates)")
         rd = recognize.read_board(frame, box, model)
         start_err = recognize.start_error(rd.placement)
-        if start_err and recognize.looks_like_start_reading(rd.placement) and ts - retune_failed_at > 60:
+        if start_err >= RETUNE_MIN_ERR and recognize.looks_like_start_reading(rd.placement) \
+                and ts - retune_failed_at > 60:
             # (reading first and testing the result costs nothing on the
             # ordinary frame, unlike an occupancy pre-check of every frame;
             # the re-fit itself is slow, so a failed one isn't retried for
