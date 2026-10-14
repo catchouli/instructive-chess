@@ -41,7 +41,9 @@ python3 -m http.server -d web 8000
 - Each card names the side the narrator played, and expands to a step-through board, the
   clocks and ratings read from the video, and the full PGN. Each result links to the video
   at the game's timestamp.
-- Only the moves the scanner is sure of are shown and searched (see `scanner/trust.py`).
+- Only the moves the scanner is sure of are shown and searched (see `scanner/trust.py`):
+  measured against the real games, none of those moves is wrong, and the whole 15-move
+  opening is shown for a little under half of the games.
 
 The only runtime dependency is `web/vendor/chess.js` (MIT), vendored locally — the page
 makes no network requests.
