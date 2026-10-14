@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   parseQuery, matchesPrefix, replay, toPgn, boardSvg, withTimestamp, fmtTime,
-  gameRating, topRating, matchesMinRating, matchesPov, matchesSpeedrun, narratorSide, trustedView,
+  gameRating, topRating, matchesMinRating, matchesPov, matchesSpeedrun, narratorSide, trustedView, MIN_SHOWN_PLY,
 } from './lib.js';
 
 let pass = 0;
@@ -121,6 +121,15 @@ t('matchesMinRating: no filter passes everything, unknown rating excluded once a
   assert.equal(matchesMinRating(unrated, 0), false);
 });
 
+t('trustedView: games with fewer than 6 trusted moves per side are not shown', () => {
+  const moves = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'c3', 'Nf6', 'd4', 'exd4', 'cxd4', 'Bb4+', 'Bd2'];
+  assert.equal(MIN_SHOWN_PLY, 12);
+  assert.equal(trustedView({ moves_san: moves, trusted_ply: 2 }), null);
+  assert.equal(trustedView({ moves_san: moves, trusted_ply: 11 }), null);
+  assert.equal(trustedView({ moves_san: moves, trusted_ply: 12 }).moves_san.length, 12);
+  assert.equal(trustedView({ moves_san: moves.slice(0, 4) }), null);   // short game, no trust data
+});
+
 t('end-to-end against data/games.json (if present)', () => {
   let games;
   try { games = JSON.parse(readFileSync(new URL('./data/games.json', import.meta.url))); }
@@ -139,20 +148,22 @@ t('end-to-end against data/games.json (if present)', () => {
 });
 
 t('trustedView: cuts moves, times and clocks to trusted_ply', () => {
-  const g = { moves_san: ['e4', 'e5', 'Nf3', 'Nc6'], move_seconds: [1, 2, 3, 3],
-    clock_white_seconds: [600, 600, 598, 598], trusted_ply: 2, ply: 4 };
+  const moves = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'c3', 'Nf6', 'd4', 'exd4', 'cxd4', 'Bb4+', 'Bd2', 'Bxd2+'];
+  const secs = moves.map((_, i) => i + 1);
+  const clk = moves.map((_, i) => 600 - i);
+  const g = { moves_san: moves, move_seconds: secs, clock_white_seconds: clk, trusted_ply: 12, ply: 14 };
   const v = trustedView(g);
-  assert.deepEqual(v.moves_san, ['e4', 'e5']);
-  assert.deepEqual(v.move_seconds, [1, 2]);
-  assert.deepEqual(v.clock_white_seconds, [600, 600]);
+  assert.deepEqual(v.moves_san, moves.slice(0, 12));
+  assert.deepEqual(v.move_seconds, secs.slice(0, 12));
+  assert.deepEqual(v.clock_white_seconds, clk.slice(0, 12));
   assert.equal(v.clock_black_seconds, undefined);
-  assert.equal(v.ply, 2);
-  assert.equal(g.moves_san.length, 4);   // the data itself is untouched
+  assert.equal(v.ply, 12);
+  assert.equal(g.moves_san.length, 14);   // the data itself is untouched
 });
 
 t('trustedView: nothing trusted hides the game; no field shows it all', () => {
   assert.equal(trustedView({ moves_san: ['e4'], trusted_ply: 0 }), null);
-  const old = { moves_san: ['e4', 'e5'] };
+  const old = { moves_san: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'c3', 'Nf6', 'd4', 'exd4', 'cxd4', 'Bb4+'] };
   assert.equal(trustedView(old), old);
 });
 

@@ -147,12 +147,15 @@ export function fmtTime(s) {
  * clocks) cut to `trusted_ply` - see scanner/trust.py. The catalog keeps
  * every move with a per-move confidence, but a wrong move in a searchable
  * catalog is worse than a shorter game, so only trusted moves are shown or
- * searched. Returns null when nothing is trusted. Entries without
+ * searched. Returns null when fewer than MIN_SHOWN_PLY plies are trusted
+ * (a 2-ply stub is no use for finding an opening). Entries without
  * `trusted_ply` (older catalogs) are shown in full.
  */
+export const MIN_SHOWN_PLY = 12;   // at least 6 trusted moves by each side, or the game isn't listed
+
 export function trustedView(game) {
   const n = Number.isInteger(game.trusted_ply) ? game.trusted_ply : game.moves_san.length;
-  if (n <= 0) return null;
+  if (n < MIN_SHOWN_PLY) return null;
   if (n >= game.moves_san.length) return game;
   const cut = (arr) => (Array.isArray(arr) ? arr.slice(0, n) : arr);
   return {
