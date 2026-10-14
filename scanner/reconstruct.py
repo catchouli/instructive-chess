@@ -34,6 +34,9 @@ GUESS_MAX_PLIES = 3    # at most this many routes of at most this many plies (a 
 UNDO = True            # the undo check in reconstruct
 UNDO_WINDOW_S = 6.0    # a ply reverted within this long of appearing is taken back outright
 PREMOVE_MAX_DIFF = 6   # a premove drawn on a move changes at most this many squares
+LOOKAHEAD_MAX_DIFF = 8      # _explains_next: the next reading must be within a move or two
+LOOKAHEAD_DEPTH = 4         # ...searched this deep at most
+LOOKAHEAD_MAX_VARIANTS = 4  # ...trying at most this many premove-stripped variants of it
 OPEN_DEPTH = 5         # a video that skips the opening frames: accept an early
 OPEN_HAMMING = 16     # position implied uniquely from the standard start
 START_TOLERANCE = 1     # allowed mismatched squares when spotting a start position
@@ -508,13 +511,17 @@ def _explains_next(board: chess.Board, moves: list[chess.Move], following: str) 
     here = _placement_of(b)
     if following == here:
         return True
-    targets = [following] + [fixed for fixed, _ in _without_premove(b, following)]
+    if _hamming(here, following) > LOOKAHEAD_MAX_DIFF:
+        return False      # too far to be the next move or two - and too costly to search
+    # (bounded: this runs for most readings, and every premove-stripped
+    # variant of a noisy frame searched to full depth once took hours)
+    targets = [following] + [fixed for fixed, _ in _without_premove(b, following)][:LOOKAHEAD_MAX_VARIANTS]
     for tgt in targets:
         if tgt == here:
             return True
         if not _reachable(here, tgt):
             continue
-        seq, _ = _find_sequence(b, tgt, MAX_DEPTH, NODE_BUDGET // 10)
+        seq, _ = _find_sequence(b, tgt, LOOKAHEAD_DEPTH, NODE_BUDGET // 50)
         if seq is not None and _lands_exactly(b, seq, tgt):
             return True
     return False
