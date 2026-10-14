@@ -116,4 +116,11 @@ def refine_game(path: Path, box, model, game: reconstruct.Game, iter_frames) -> 
         # bunch), never after the bunch's own 1 fps confirmation
         game.move_seconds[start:start + size] = [round(min(max(t, t_begin + 0.1), t_end), 2) for t in times]
         improved += len(set(times))
+        # Every position along the bunch was just seen, in order and exactly
+        # at least once: the moves are no longer a best fit to a frame a
+        # square off, nor a guess among routes (another route would pass
+        # through different positions) - so trust.py may count them.
+        span = set(range(start, start + size))
+        game.fuzzy = [i for i in game.fuzzy if i not in span]
+        game.ambiguous = [i for i in game.ambiguous if i not in span]
     return improved

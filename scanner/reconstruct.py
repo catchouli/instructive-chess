@@ -33,6 +33,8 @@ GUESS_MAX_PLIES = 3    # at most this many routes of at most this many plies (a 
                        # route to one square); bigger tangles produced rook shuffles
 UNDO = True            # the undo check in reconstruct
 UNDO_WINDOW_S = 6.0    # a ply reverted within this long of appearing is taken back outright
+BUNCH_UNDO = True      # ...and so is a whole bunch accepted from one reading
+FUZZY_CONFIRM_S = 0.0  # a fuzzy bunch's position read exactly this long confirms it (0 = never)
 PREMOVE_MAX_DIFF = 6   # a premove drawn on a move changes at most this many squares
 LOOKAHEAD_MAX_DIFF = 8      # _explains_next: the next reading must be within a move or two
 LOOKAHEAD_DEPTH = 4         # ...searched this deep at most
@@ -659,16 +661,19 @@ def reconstruct(readings: list[tuple[float, str | None]],
     history: list[str] = []
     browsing = False
     skipped: list[str] = []        # readings stepped over since the last accepted one (see _pick_path)
+    pending_fuzzy: list[int] = []  # plies of the last bunch accepted a square off, awaiting an exact sighting
+    pending_seen = 0.0             # ...seconds its resulting position has been read exactly since
     undone_from: int | None = None  # ply count the board just reverted to (see the undo check)
 
     def close(why: str = ""):
-        nonlocal current, board, history, browsing, skipped, undone_from
+        nonlocal current, board, history, browsing, skipped, undone_from, pending_fuzzy, pending_seen
         if current:
             note(last_ts, f"close {why}: {current.ply} plies, {current.skipped} skipped")
         if current and current.ply >= 2:
             games.append(current)
         current, board = None, None
         history, browsing, skipped, undone_from = [], False, [], None
+        pending_fuzzy, pending_seen = [], 0.0
 
     def retract_to(k: int) -> None:
         nonlocal board
@@ -746,6 +751,17 @@ def reconstruct(readings: list[tuple[float, str | None]],
             browsing = False
             skipped = []
             undone_from = None
+            if pending_fuzzy and FUZZY_CONFIRM_S:
+                # the bunch's resulting position read exactly: on 209
+                # benchmarked games every wrong fuzzy bunch's position was
+                # never read exactly before the next move, while 24 right
+                # ones were, for 2+ seconds
+                nxt_ts = events[ei + 1][1] if ei + 1 < len(events) else ts + 1.0
+                pending_seen += max(1.0, nxt_ts - ts)
+                if pending_seen >= FUZZY_CONFIRM_S:
+                    note(ts, f"fuzzy bunch at plies {pending_fuzzy[0] + 1}-{pending_fuzzy[-1] + 1} confirmed")
+                    current.fuzzy = [i for i in current.fuzzy if i not in set(pending_fuzzy)]
+                    pending_fuzzy, pending_seen = [], 0.0
             continue
 
         # A move shown and taken back: the board reverted to the position
@@ -791,6 +807,18 @@ def reconstruct(readings: list[tuple[float, str | None]],
         # ordinary processing - unless already browsing.
         n = len(history) - 1
         earlier = [k for k in range(n) if history[k] == target]
+        if BUNCH_UNDO and earlier and not browsing and earlier[-1] < n - 1 and ts - current.move_seconds[-1] <= UNDO_WINDOW_S \
+                and len(set(current.move_seconds[earlier[-1]:n])) == 1:
+            # Several plies accepted from one reading, then the board went
+            # straight back to before them: the reading was a piece in hand
+            # (traced: a rook dragged for two seconds read as "Ra3 a4 Ra1
+            # a3"; the revert looked like browsing, the four plies stayed,
+            # and 65 correct plies were lost after them).
+            k = earlier[-1]
+            note(ts, f"undo: plies {k + 1}-{n} ({' '.join(current.moves_san[k:n])}) shown briefly, taken back")
+            retract_to(k)
+            misses = 0
+            continue
         if earlier and (browsing or earlier[-1] == n - 1 or (n - earlier[-1]) % 2 == 0):
             if earlier[-1] == n - 1 and not browsing and ts - current.move_seconds[-1] <= UNDO_WINDOW_S:
                 # the last ply was on screen only briefly before the board
@@ -972,8 +1000,10 @@ def reconstruct(readings: list[tuple[float, str | None]],
         note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(moves).split()[-len(moves) * 2:]))
         if guessed:
             current.ambiguous.extend(range(current.ply, current.ply + len(moves) + guess_span))
+        pending_fuzzy, pending_seen = [], 0.0
         if len(moves) >= 2 and not _lands_exactly(board, moves, target):
             current.fuzzy.extend(range(current.ply, current.ply + len(moves)))
+            pending_fuzzy = list(range(current.ply, current.ply + len(moves)))
         for mv in moves:
             current.moves_san.append(board.san(mv))
             current.move_seconds.append(ts)
