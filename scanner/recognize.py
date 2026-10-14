@@ -451,7 +451,11 @@ def _classify_cell(frame_bgr: np.ndarray, box, r: int, c: int, cell: np.ndarray,
         # blob *inside the crop* may hold a piece the crop clips (confirmed:
         # a knight on a8 with the box a few pixels off read empty all game
         # at frac 0.04, and matched at 0.97 once shifted) - retry shifted.
-        if shift and diff > _CLIPPED_DIFF:
+        if shift and diff > _CLIPPED_DIFF and (r in (0, 7) or c in (0, 7)):
+            # edge squares only: that's where a box clips a piece, and a
+            # highlighted empty square anywhere else would otherwise pay for
+            # 24 shifted matches per frame (the dense re-read went from
+            # minutes to hours)
             k, best = _shifted_match(frame_bgr, box, r, c, model)
             if best >= max(model.match_thresh, _SHIFT_MIN_SIM):
                 return model.piece_of[k], best
