@@ -34,7 +34,7 @@ GUESS_MAX_PLIES = 3    # at most this many routes of at most this many plies (a 
 UNDO = True            # the undo check in reconstruct
 UNDO_WINDOW_S = 6.0    # a ply reverted within this long of appearing is taken back outright
 BUNCH_UNDO = True      # ...and so is a whole bunch accepted from one reading
-FUZZY_CONFIRM_S = 0.0  # a fuzzy bunch's position read exactly this long confirms it (0 = never)
+FUZZY_CONFIRM_S = 2.0  # a fuzzy bunch's position read exactly this long confirms it (0 = never)
 PREMOVE_MAX_DIFF = 6   # a premove drawn on a move changes at most this many squares
 LOOKAHEAD_MAX_DIFF = 8      # _explains_next: the next reading must be within a move or two
 LOOKAHEAD_DEPTH = 4         # ...searched this deep at most
