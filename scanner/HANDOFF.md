@@ -1,85 +1,62 @@
-# Handoff: where scanning stopped (2026-10-14)
+# Handoff: where scanning stopped (2026-10-15)
 
-All background jobs were stopped on purpose at 17:23 on 2026-10-14 to free the machine.
-Nothing is broken, and everything below can be resumed.
+Work was stopped on purpose at 13:40 on 2026-10-15. Nothing is running and nothing is broken.
+Saved state lives in `scanner/cache/handoff/` (gitignored):
 
-Saved state lives in `scanner/cache/handoff/` (gitignored, so it isn't in git):
-
-- `batch2_ids.json`: the 141 new tournament videos being read
-- `refit_ids.txt`: the 18 library videos to re-read
-- `old_readings/`: those 18 videos' readings from before the re-fit gate
-- `batch2_logs/`: logs from the batch so far
-- `ab_fuzzyconfirm.log`: the half-finished A/B
-- `scripts/`: scratch A/B and analysis scripts (`ab_val.py`, `trust_stats.py`, `retrust.py`, `rvt*.py`)
+- `batch2_ids.json`: the 141 new tournament videos
+- `to_reconstruct.txt`: the 123 of them not yet built into catalog entries
+- `refit_ids.txt`, `old_readings/`: the 18 library videos re-read after the re-fit gate (done and merged)
+- `batch2_logs/`, `refit_logs/`: read logs
+- `scripts/`: scratch scripts; `cmp_catalogs.py` compares two benchmarked catalogs game by game,
+  matched by (video, start_seconds)
 
 ## Live site / git
 
-- The live catalog `web/data/games.json` has 221 games from 59 videos.
-  The site hides games with fewer than 12 trusted plies (`MIN_SHOWN_PLY`), which hides 63 of them.
-- The last benchmark found 0 wrong trusted moves, and every move was right in about 71% of games.
-- Local commits not pushed yet: b61ded7, c421d8b, 0051404, 1020d21, plus this note.
+- `web/data/games.json`: **354 games from 76 videos**, 241 listed on the site (12+ trusted plies).
+  It was 221 games from 59 videos, 158 listed.
+- Benchmark: 337 matched, **0 wrong trusted plies of 8,831**, whole opening trusted in 45%.
+- Merged this session: the 18 re-read library videos (every-move-right 55 -> 61 games, shown 60 -> 66,
+  0 wrong trusted) and the first 18 batch videos to finish reconstructing (17 had games).
+- Committed this session: 6e147a1 (`FUZZY_CONFIRM_S` = 2.0) and the catalog update. Nothing is pushed.
 
-## 1. Finish the batch read (biggest win for library size)
+## 1. Build the remaining 123 batch videos (just CPU, no downloads)
 
-The batch had read 33 of 141 videos (5 hours with 6 jobs, about 16 hours left at that rate).
-Finished videos have `scanner/cache/<id>-readings.json` and are skipped on restart.
-The 6 videos in progress when it stopped are read again from scratch.
-
-```sh
-scanner/.venv/bin/python scanner/tests/dump_batch.py --jobs 6 \
-  --log scanner/cache/handoff/batch2_logs/logs $(python3 -c "import json;print(' '.join(json.load(open('scanner/cache/handoff/batch2_ids.json'))))")
-```
-
-Use `--jobs 2` or `3` if the machine is needed at the same time.
-
-The first 6 batch videos (`_zT8aWZh2x0`, `y5eb3xaRRPA`, `_ZmPtTJHfNI`, `5M0c_EwRQiI`, `iFdoGDFnT3c`, `0RpvhiIZQkk`) were read before the re-fit gate (c421d8b).
-To check them, look in their logs for big "board moved" jumps.
-Shifts of 2 to 4 px are normal; a jump of tens of px or a size change means a bad re-fit.
-If you find one, delete that video's readings file and read it again.
-
-## 2. Re-read the 18 library videos where the old re-fit fired
+Readings exist for 140 of 141 batch videos, so this only reruns reconstruction.
+It is slow: about 45 minutes per video per job, so ~10 hours at 10 jobs.
 
 ```sh
-scanner/.venv/bin/python scanner/tests/dump_batch.py --jobs 6 --log scanner/cache/handoff/refit_logs $(cat scanner/cache/handoff/refit_ids.txt)
+scanner/.venv/bin/python scanner/tests/rescan.py --from-readings --jobs 10 \
+  --out /tmp/batch/games.json $(cat scanner/cache/handoff/to_reconstruct.txt)
 ```
 
-Their old readings were moved to `handoff/old_readings/`, so `dump_batch` reads them again.
-If you'd rather skip this, copy them back to `scanner/cache/`.
+The video without readings is `8y9gWaB8zk4` (YouTube 403 during the batch, the retry was stopped).
+Its `.webm` may be partial: delete `scanner/cache/8y9gWaB8zk4.*` and run `tests/dump_batch.py` on it alone.
 
-## 3. Build catalog entries, merge, benchmark
+rescan.py seeds each per-video part file with `[]`, so a killed run's parts are only valid for
+videos its log marks `ok`. To merge early, collect those parts yourself (that's what was done this time).
 
-1. Run `scanner/rescan.py --from-readings <ids>` over the new and re-read videos, writing to a scratch catalog.
-2. Run `scanner/tests/merge_catalog.py SCRATCH --into web/data/games.json --only <ids>`.
-3. Run `scanner/catalog.py web/data/games.json`.
-4. Run `scanner/tests/benchmark.py`. The hard bar is 0 wrong trusted moves.
-   Compare games against the old catalog by (video, start_seconds), not by game ID.
-5. Commit, and add a row to EXPERIMENTS.md.
+Then, as before:
+1. `scanner/tests/merge_catalog.py /tmp/batch/games.json --only <ids>` (into a copy of the live catalog first)
+2. `scanner/catalog.py --catalog <copy>`, then `scanner/tests/benchmark.py --catalog <copy> --json ...`
+3. Hard bar: 0 wrong trusted. Copy over `web/data/games.json`, commit.
 
-## 4. Fuzzy-confirm A/B (stopped halfway)
+## 2. Open trust leak: Aig9-ZyQ8Ak game 4 (start 1393 s)
 
-`reconstruct.FUZZY_CONFIRM_S` is committed at 0.0 (off).
-The idea: trust a fuzzy bunch once its resulting position is then read exactly for 2+ seconds.
-In 209 games, all 7 wrong early fuzzy bunches never had their position read exactly, while 24 right ones did.
+Left OUT of the live catalog. 25 plies recorded, first 13 right, but 17 trusted: plies 14-17 are wrong
+and trusted. First wrong trusted game since the trust recalibration. Trace it with
+`scanner/tests/trace_video.py` before the next merge; when building that video again,
+check whether the leak is still there before including the game.
 
-The baseline arm finished: 132 matched, 81 every move right, 0 wrong trusted, 3,345 trusted plies, 95 shown, 51 whole openings.
-The 2.0 arm was not run.
+## 3. Done this session
 
-To rerun only that arm, use the same library videos that have readings (47 of them):
+- Fuzzy-confirm A/B: 0.0 vs 2.0 on 41 library videos, identical moves, 0 wrong trusted either way;
+  trusted plies 3,345 -> 3,567, shown 95 -> 100, whole openings 51 -> 59. Default set to 2.0 (6e147a1).
+- The 6 batch videos read before the re-fit gate: their board shifts are all 2-8 px, no bad re-fits.
+- Library video `9dd8dmyDkU8`: the re-read found its one game below the 0.6 confidence cutoff,
+  so the live catalog keeps the old entry.
 
-```sh
-VALS=2 scanner/.venv/bin/python scanner/cache/handoff/scripts/ab_val.py <outdir> FUZZY_CONFIRM_S <video ids...>
-```
+## 4. After that
 
-It takes about 1 to 2 hours on one core.
-If the result has 0 wrong trusted games and more games shown than 95, set the default to 2.0 and commit.
-Fuzzy bunches are the main reason games are hidden (32 of the 63).
-
-## 5. After that
-
-- Keep fixing hidden games. Of the 63:
-  - 32 are cut before a fuzzy bunch
-  - 13 are cut before a big or late bunch
-  - 10 are cut before an ambiguous route
-  - 8 are genuinely short
+- Hidden games (fewer than 12 trusted plies): mostly cut before fuzzy bunches, big/late bunches, ambiguous routes.
 - Keep adding tournament videos (Titled Tuesday and similar, not speedruns).
-- See EXPERIMENTS.md "Current state (2026-10-14)" before trying any idea.
+- See EXPERIMENTS.md "Current state" before trying any idea.
