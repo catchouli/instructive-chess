@@ -54,7 +54,11 @@ Tuesday" streams), Daniel Naroditsky (`danielnaroditsky`), John Bartholomew
   whole library. Several ideas that helped on 3 videos were neutral or worse
   on all 52.
 
-## Current state (2026-10-14)
+## Current state (2026-10-15)
+
+Live catalog: **354 games from 76 videos**, 241 listed (12+ trusted plies), 337 matched: **0 wrong trusted of 8,831 plies**, whole opening trusted in 45%. Added: the 18 library videos re-read after the re-fit gate, and 18 of the 141-video tournament batch (the rest are read but not yet reconstructed, see HANDOFF.md). One new game (Aig9-ZyQ8Ak game 4) had 4 wrong trusted plies (14-17) and was left out; not yet traced.
+
+## Earlier state (2026-10-14)
 
 Live catalog: **220 games from 59 videos** (the 51 earlier videos, all but
 one rescanned with the blitz-stream fixes, plus eight Titled Tuesday
