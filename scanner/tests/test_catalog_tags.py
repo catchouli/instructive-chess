@@ -53,18 +53,25 @@ def test_reconcile_median_prefers_four_digit_reads_on_a_blurry_video():
     # BdcY0WCN29Y: most narrator reads are truncated junk; the two 4-digit
     # reads (one right) must define the median, or the right one is blanked.
     games = [_game("white", 192, 431), _game("black", 1273, 2933), _game("white", 242, 152),
-             _game("white", 2747, 2747), _game("black", 441, 100), _game("white", None, 2563)]
+             _game("white", 2747, 2741), _game("black", 441, 100), _game("white", None, 2563)]
     catalog.reconcile_ratings(games)
-    assert games[3] == {"pov": "white", "rating_white": 2747, "rating_black": 2747}
+    assert games[3] == {"pov": "white", "rating_white": 2747, "rating_black": 2741}
     assert games[5] == {"pov": "white", "rating_black": 2563}
     assert "rating_white" not in games[0] and "rating_black" not in games[0]
     assert "rating_black" not in games[1]   # 1273 is far from 2747
 
 
 def test_reconcile_leaves_a_speedrun_alone():
-    games = [_game("white", 400, 400), _game("black", 400, 417), _game("white", 433, 420),
+    games = [_game("white", 400, 405), _game("black", 400, 417), _game("white", 433, 420),
              _game("black", 450, 454), _game("white", 497, 504)]
     assert catalog.reconcile_ratings(games) == 0
+
+
+def test_reconcile_blanks_the_opponent_when_both_sides_read_the_same():
+    # one rating read twice: the narrator's agrees with the rest of the video
+    games = [_game("white", 2540, 1611), _game("black", 2545, 1700), _game("white", 2540, 2540)]
+    assert catalog.reconcile_ratings(games) == 1
+    assert games[2] == {"pov": "white", "rating_white": 2540}
 
 
 def test_reconcile_needs_three_narrator_reads():
