@@ -111,6 +111,21 @@ a player's own live board has their side at the bottom) and whether the video is
 speedrun. `scanner/catalog.py` re-derives both tags for an existing catalog without
 rescanning.
 
+### Transcripts
+
+`scan.py` also saves the video's YouTube transcript (the uploader's captions if any,
+else the automatic ones) to `transcripts/<video_id>.json` as timed segments, so the
+narrator's commentary can be lined up with the moves later via each ply's
+`move_seconds`. Backfill or refetch with:
+
+```sh
+scanner/.venv/bin/python scanner/transcript.py --all        # every catalogued video
+scanner/.venv/bin/python scanner/transcript.py VIDEO_ID     # one video (--force to refetch)
+```
+
+The text is kept raw: automatic captions mangle chess notation, and the catalog's moves
+are the ground truth.
+
 ### Scope
 
 Tuned for **digital boards** (lichess, chess.com, analysis GUIs) shown head-on. The piece
