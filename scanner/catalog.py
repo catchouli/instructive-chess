@@ -89,6 +89,12 @@ def reconcile_ratings(entries: list[dict]) -> int:
         if median >= TITLED_LEVEL and e.get(theirs) is not None and e[theirs] < OPPONENT_FLOOR:
             del e[theirs]
             blanked += 1
+        # Both sides the same value: one rating read twice (6 of 337
+        # benchmarked games, the opponent's wrong in all six) - the
+        # narrator's is the one that agrees with the rest of the video.
+        if e.get(theirs) is not None and e.get(theirs) == e.get(mine):
+            del e[theirs]
+            blanked += 1
     return blanked
 
 

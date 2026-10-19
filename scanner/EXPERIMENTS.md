@@ -188,6 +188,7 @@ and recalibrate as the library grows (it needed it once already).
 
 | Idea | Result | Kept? |
 |---|---|---|
+| Both sides read the same rating: blank the opponent's (`catalog.reconcile_ratings`) | 6 of 337 games; the opponent's was wrong in all six. Wrong rating values 27 → 21 of 674, one right one lost (hQzhibR0ZYg-2, players 18 apart, both read 1129) | Yes |
 | Lichess: read the row beside each clock | Lichess games with both ratings right 2 → 4 of 6 (7 of 7 after later fixes) | Yes (`9edf182`) |
 | ...for clocks above/below the board too | Read the board itself ("2990", "199") | **No**, side panels only (`627e115`) |
 | Vote across board-box shifts (−3/0/+3 px) | The band reader flips on a few pixels; 4 → 6 of 6 | Yes (`a34e821`) |
