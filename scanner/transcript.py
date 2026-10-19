@@ -65,11 +65,19 @@ def fetch(target: str, lang: str = LANG) -> dict | None:
     The uploader's own captions win over automatic ones."""
     vid = download.video_id_from_url(target) if download._looks_like_url(target) else target
     url = f"https://www.youtube.com/watch?v={vid}"
+    # "<lang>-orig" is the automatic track in the video's own language;
+    # plain "<lang>" can be a translated copy that YouTube rate-limits
+    # separately (10 of 76 videos answered 429 for "en" but served "en-orig")
+    tries = [("manual", "--write-subs", lang), ("auto", "--write-auto-subs", lang),
+             ("auto", "--write-auto-subs", f"{lang}-orig")]
     with tempfile.TemporaryDirectory(prefix="instructive-chess-tr-") as tmp:
-        for kind, flag in (("manual", "--write-subs"), ("auto", "--write-auto-subs")):
-            download._run([download._ytdlp(), "--skip-download", flag, "--sub-langs", lang,
-                           "--sub-format", "json3", "--no-warnings", "-o", f"{tmp}/%(id)s", url])
-            got = Path(tmp) / f"{vid}.{lang}.json3"
+        for kind, flag, track in tries:
+            try:
+                download._run([download._ytdlp(), "--skip-download", flag, "--sub-langs", track,
+                               "--sub-format", "json3", "--no-warnings", "-o", f"{tmp}/%(id)s", url])
+            except RuntimeError:
+                continue    # e.g. 429 on this track - try the next
+            got = Path(tmp) / f"{vid}.{track}.json3"
             if got.exists():
                 segments = parse_json3(json.loads(got.read_text()))
                 break
