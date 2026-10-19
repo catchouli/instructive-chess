@@ -32,10 +32,12 @@ import recognize             # noqa: E402
 import reconstruct           # noqa: E402
 import refine                # noqa: E402
 
+RECALIBRATE_ON_REFIT = False  # re-cut the piece templates when a re-fit moves the box (recognize.recalibrate)
 CLOCK_MIN_COVERAGE = 0.35  # a candidate clock region must read at least this
                            # fraction of its window's frames to be trusted - an
                            # idle clock reads poorly in some skins, and misreads
                            # are blanked by clock_read._physically_consistent
+CLOCK_MAX_TICK_SHARE = 0.5  # a player clock never counts down non-stop for more of the game than this
 CLOCK_MAX_CANDIDATES = 4  # candidate regions screened per game; the best-reading two are kept
 CLOCK_SCREEN_FRAMES = 40  # frames each candidate is screened on before a full read
 RATING_BOX_SHIFTS = (-3, 0, 3)  # board-box offsets (scan pixels) each rating frame is read at
@@ -163,6 +165,11 @@ def read_frames(frames, box, log=lambda msg: None):
                 log(f"      board moved: box {box.x},{box.y} -> {retuned.x},{retuned.y} "
                     f"{retuned.w}x{retuned.h} at t={int(ts)}s")
                 box = retuned
+                if RECALIBRATE_ON_REFIT:
+                    fresh = recognize.recalibrate(frame, box, model)
+                    if fresh is not None:
+                        log(f"      templates re-cut at t={int(ts)}s")
+                        model = fresh
                 rd = recognize.read_board(frame, box, model)
             else:
                 retune_failed_at = ts
@@ -237,15 +244,28 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> Non
                     cands.append(cbox)
         screened = [(cbox, clock_read.read_clock_ocr(sample_f, sample_t, cbox, reject_outliers=False))
                     for cbox in cands]
-        chosen = clock_read.assign_clock_sides(screened, board_box, g.flipped, CLOCK_MIN_COVERAGE)
         box_for = {id(rd): cbox for cbox, rd in screened}
+        full_for: dict[int, list] = {}
+        while True:
+            chosen = clock_read.assign_clock_sides(screened, board_box, g.flipped, CLOCK_MIN_COVERAGE)
+            for rd in chosen.values():
+                if id(rd) not in full_for:
+                    full_for[id(rd)] = clock_read.read_clock_ocr(frames, times, box_for[id(rd)])
+            # A player's clock stops on every opponent move; a countdown
+            # that runs for most of the game is something else (see
+            # clock_read.longest_tick_share).
+            ticking = [rd for rd in chosen.values()
+                       if clock_read.longest_tick_share(full_for[id(rd)]) > CLOCK_MAX_TICK_SHARE]
+            if not ticking:
+                break
+            screened = [(c, rd) for c, rd in screened if all(rd is not t for t in ticking)]
         if len(chosen) == 2:
             g.clock_boxes = sorted(((int(c.x), int(c.y), int(c.w), int(c.h))
                                     for c in (box_for[id(rd)] for rd in chosen.values())),
                                    key=lambda b: b[1])
         clock_readings = {}
         for side, rd in chosen.items():
-            full = clock_read.read_clock_ocr(frames, times, box_for[id(rd)])
+            full = full_for[id(rd)]
             if sum(r.seconds is not None for r in full) >= CLOCK_MIN_COVERAGE * len(full):
                 clock_readings[side] = full
         if not clock_readings:

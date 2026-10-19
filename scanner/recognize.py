@@ -145,6 +145,7 @@ class BoardModel:
     occ_thresh: float = 0.05     # fallback foreground fraction
     occ_diff: float = 3.5        # mean abs difference from the empty template
     match_thresh: float = 0.42
+    n_base: int = 0              # templates from the first calibration (0 = all); see recalibrate
 
 
 def vote_stream(readings: list[tuple[float, str | None]],
@@ -311,6 +312,35 @@ def calibrate_from_start(frame_bgr: np.ndarray, box, tolerance: int = 6):
     if err > tolerance:
         return None, box
     return model, box
+
+
+def recalibrate(frame_bgr: np.ndarray, box, model: "BoardModel") -> "BoardModel | None":
+    """New templates cut from an opening frame at *box*, or None unless they
+    read the opening at least as well as *model* does there and match it
+    more confidently.
+
+    Templates are cut once, at the first opening, with the box as fitted
+    then. When a later re-fit moves the box, the old templates hold every
+    piece a few pixels off where the cells now put it (confirmed on
+    Aig9-ZyQ8Ak: the calibration box sat 4 px high, the black king's
+    template was clipped at the bottom, and after the re-fit the king
+    matched it at < 0.2 and read as empty in a third of all frames)."""
+    cells = {(r, c): cell for r, c, cell in _cells(frame_bgr, box)}
+    cand = _build_model(cells, model.flipped)
+    if len(set(cand.piece_of)) < 12:
+        return None
+    # Replacing the old templates outright was measured worse (Aig9-ZyQ8Ak:
+    # games found 9 -> 2, white king missing 1% -> 26% of readings): keep
+    # them, and add the new cut beside them - each square takes its best match.
+    k = model.n_base or len(model.piece_of)   # the first calibration's, plus only the latest cut
+    merged = BoardModel(
+        temps=np.concatenate([model.temps[:k], cand.temps]), masks=np.concatenate([model.masks[:k], cand.masks]),
+        piece_of=list(model.piece_of[:k]) + list(cand.piece_of), flipped=model.flipped, empty=model.empty,
+        occ_thresh=model.occ_thresh, occ_diff=model.occ_diff, match_thresh=model.match_thresh, n_base=k)
+    old, new = read_board(frame_bgr, box, model), read_board(frame_bgr, box, merged)
+    if start_error(new.placement) > start_error(old.placement) or new.confidence <= old.confidence:
+        return None
+    return merged
 
 
 def start_error(placement: str) -> int:

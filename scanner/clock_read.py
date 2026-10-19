@@ -1432,6 +1432,28 @@ def side_for_box(clock_box: ClockBox, board_box, flipped: bool) -> str:
     return top_side if top else bottom_side
 
 
+def longest_tick_share(readings: list[ClockReading]) -> float:
+    """The longest stretch over which the clock counted down without
+    stopping, as a share of the whole read window. A player's clock stops
+    on every opponent move, so it never runs for most of a game; a
+    tournament countdown never stops (confirmed: a lichess arena's timer was
+    taken for White's clock - 2427 s for 180). Gaps in the read are bridged
+    by the time they span, so a clock that reads poorly while idle isn't
+    mistaken for one that never stops (a first test, the share of seconds
+    with no change, scored real idle-misreading clocks 0.06-0.10)."""
+    valid = [(r.t, r.seconds) for r in readings if r.seconds is not None]
+    if len(valid) < 20 or readings[-1].t <= readings[0].t:
+        return 0.0
+    best = 0.0
+    run_start = valid[0][0]
+    for (t0, v0), (t1, v1) in zip(valid, valid[1:]):
+        dt, dv = t1 - t0, v0 - v1
+        if not (dv > 0 and abs(dv - dt) <= 1.5):
+            run_start = t1
+        best = max(best, t1 - run_start)
+    return best / (readings[-1].t - readings[0].t)
+
+
 def assign_clock_sides(candidates: list[tuple[ClockBox, list[ClockReading]]],
                        board_box, flipped: bool, min_coverage: float
                        ) -> dict[str, list[ClockReading]]:
