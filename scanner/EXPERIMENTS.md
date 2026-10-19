@@ -171,6 +171,8 @@ and recalibrate as the library grows (it needed it once already).
 | Idea | Result | Kept? |
 |---|---|---|
 | Tesseract OCR instead of self-calibrating digit templates | Self-calibration was confidently wrong for whole games | Yes (`5b80713`) |
+| A failed clock read is retried with the crop widened leftwards by one box width (`clock_read.WIDEN_LEFT`). chess.com's clock is right-aligned and grows leftwards under 20 s (timer icon + "0:05.0"): the box found on the normal display clipped it, every low-time value was lost and the last one (20) carried to the end of the game (ahAoIZVTtA4 game 7) | Clocks re-read on the 84 failing games + 40 passing ones: clocks OK 40 → 77 of 124, 0 regressions caused by it. Re-run with the retry off on the 39 changed games: 32 pass only with it, 6 pass either way (rescore baseline drift), 1 (3fS-8ke1eaQ-5) reads worse than live either way, better with it (7 wrong vs 77) | Yes |
+| ...but not while screening candidate boxes | 3fS-8ke1eaQ-5: 7 → 77 wrong values | **No** |
 | Validate clock candidates on 9 frames, not 1 (lichess dims the idle clock) | lAniuIChYuA clocks 40/83 → 80/83 | Yes (`954b3aa`) |
 | Screen 4 candidates by OCR coverage; pair by vertical alignment; assign sides by relative position | Fixed T-shirt text, stacked panels, arena timers | Yes (`2844a88`, `9edf182`) |
 | Keep only physically possible readings (no rise > increment) | Removes repeated misreads of dimmed digits | Yes (`38d2053`) |

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import bisect
 from collections import Counter
+import os
 import re
 from dataclasses import dataclass
 
@@ -1015,6 +1016,9 @@ def _ocr_seconds(crop: np.ndarray) -> float | None:
     return seconds
 
 
+WIDEN_LEFT = os.environ.get("CLOCK_WIDEN_LEFT", "1") == "1"   # retry a failed read with the crop widened leftwards (see read_clock_ocr)
+
+
 def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
                    reject_outliers: bool = True) -> list[ClockReading]:
     """Read a single clock's value directly from each frame via Tesseract -
@@ -1052,6 +1056,15 @@ def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
             continue
         prev_crop = crop.astype(np.int16)
         seconds = _ocr_seconds(crop)
+        if seconds is None and WIDEN_LEFT:
+            # chess.com's clock text is right-aligned and grows leftwards
+            # under 20 s ("0:20" -> a timer icon + "0:05.0"): a box found on
+            # the normal display clips it (confirmed: ahAoIZVTtA4 read "):05.0"
+            # and every low-time value was lost, the last one carried to the
+            # end of the game). _parse_clock_text matches at the end, so text
+            # further left can't change the value.
+            wide = gray[y0:box.y + box.h + 3, max(0, box.x - box.w):box.x + box.w + 3]
+            seconds = _ocr_seconds(wide)
         prev_seconds = seconds
         readings.append(ClockReading(t=t, seconds=seconds))
     # The outlier pass assumes ~1s between frames; callers screening a
