@@ -35,6 +35,7 @@ UNDO = True            # the undo check in reconstruct
 UNDO_WINDOW_S = 6.0    # a ply reverted within this long of appearing is taken back outright
 BUNCH_UNDO = True      # ...and so is a whole bunch accepted from one reading
 FUZZY_CONFIRM_S = 2.0  # a fuzzy bunch's position read exactly this long confirms it (0 = never)
+HIDDEN_KING = 1.0  # a missing king: try castling, and moves by its side are guesses (0 = off)
 PREMOVE_MAX_DIFF = 6   # a premove drawn on a move changes at most this many squares
 LOOKAHEAD_MAX_DIFF = 8      # _explains_next: the next reading must be within a move or two
 LOOKAHEAD_DEPTH = 4         # ...searched this deep at most
@@ -422,6 +423,27 @@ def _with_lifted_king(board: chess.Board, target: str) -> str | None:
     return "".join(out) if changed else None
 
 
+def _castle_with_hidden_king(board: chess.Board, target: str) -> str | None:
+    """*target* with its missing king put where a legal castling move puts
+    it, when that castling explains *target* exactly apart from the king; or
+    None.
+
+    _with_lifted_king assumes a missing king stayed put, which turns a
+    castling into a rook move: on Aig9-ZyQ8Ak (the king was never read)
+    ...O-O read as an exact ...Rf8 and was trusted, 4 wrong plies in a row."""
+    for mv in board.legal_moves:
+        if not board.is_castling(mv):
+            continue
+        board.push(mv)
+        after = _placement_of(board)
+        board.pop()
+        king = "K" if board.turn == chess.WHITE else "k"
+        sq = after.find(king)
+        if king not in target and target[sq] == "." and after[:sq] + "." + after[sq + 1:] == target:
+            return after
+    return None
+
+
 def _same_moves(paths: list[list[chess.Move]]) -> bool:
     """Do these routes play the same moves in different orders? A burst of
     premoves (1.c4 e5 2.Nc3 Bb4 3.Nd5 ... four plies in two seconds) is
@@ -743,9 +765,16 @@ def reconstruct(readings: list[tuple[float, str | None]],
         target = placement[::-1] if current.flipped else placement
         cur_placement = _placement_of(board)
         repaired = _with_lifted_king(board, target)
+        hidden_kings = ""
         if repaired is not None:
-            note(ts, "king lifted: assumed still on its square")
-            target = repaired
+            hidden_kings = "".join(k for k in "Kk" if k not in target) if HIDDEN_KING else ""
+            castled = _castle_with_hidden_king(board, target) if HIDDEN_KING else None
+            if castled is not None:
+                note(ts, "king missing: castling explains the rest")
+                target = castled
+            else:
+                note(ts, "king lifted: assumed still on its square")
+                target = repaired
         if target == cur_placement:
             misses = 0
             browsing = False
@@ -1000,6 +1029,13 @@ def reconstruct(readings: list[tuple[float, str | None]],
         note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(moves).split()[-len(moves) * 2:]))
         if guessed:
             current.ambiguous.extend(range(current.ply, current.ply + len(moves) + guess_span))
+        if hidden_kings:
+            # where a missing king really is is a guess: a move by its side
+            # could be a king move or castling in disguise
+            for j, mv in enumerate(moves):
+                mover = "K" if (board.turn == chess.WHITE) == (j % 2 == 0) else "k"
+                if mover in hidden_kings:
+                    current.ambiguous.append(current.ply + j)
         pending_fuzzy, pending_seen = [], 0.0
         if len(moves) >= 2 and not _lands_exactly(board, moves, target):
             current.fuzzy.extend(range(current.ply, current.ply + len(moves)))
