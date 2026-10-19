@@ -34,7 +34,7 @@ import reconstruct           # noqa: E402
 import refine                # noqa: E402
 import transcript            # noqa: E402
 
-RECALIBRATE_ON_REFIT = os.environ.get("RECALIBRATE_ON_REFIT", "0") == "1"  # re-cut the piece templates when a re-fit moves the box (recognize.recalibrate)
+RECALIBRATE_ON_REFIT = os.environ.get("RECALIBRATE_ON_REFIT", "1") == "1"  # re-cut the piece templates when a re-fit moves the box (recognize.recalibrate)
 CLOCK_MIN_COVERAGE = 0.35  # a candidate clock region must read at least this
                            # fraction of its window's frames to be trusted - an
                            # idle clock reads poorly in some skins, and misreads
