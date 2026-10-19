@@ -79,7 +79,7 @@ CONF_FUZZY = 0.9       # a bunch accepted from a reading a square off (reconstru
 
 def assess(moves_san: list[str], move_seconds: list[float],
            clocks_checked_end: bool = False, ambiguous: list[int] = (),
-           fuzzy: list[int] = ()) -> tuple[list[float], int]:
+           fuzzy: list[int] = (), doubtful: list[int] = ()) -> tuple[list[float], int]:
     """(per-move confidence, trusted_ply) for one game. `clocks_checked_end`:
     both clocks were read, so clock_read.live_move_count has already checked
     that a final mate happened with a clock running - only then does a mate
@@ -87,7 +87,10 @@ def assess(moves_san: list[str], move_seconds: list[float],
     resignation). `ambiguous`: plies whose moves were a guess among routes
     to the same position; trust ends before the first, like before a bunch.
     `fuzzy`: plies of a bunch accepted from a reading a square off - the
-    same treatment (a wrong such pair leaked 16 trusted plies)."""
+    same treatment (a wrong such pair leaked 16 trusted plies). `doubtful`:
+    plies accepted under doubt (after an undo, browsing back or a detour, or
+    a bunch after an unexplainable reading; see reconstruct.Game.doubtful) -
+    the same again."""
     n = len(moves_san)
     bunches = _bunches(move_seconds)
     conf = []
@@ -107,7 +110,10 @@ def assess(moves_san: list[str], move_seconds: list[float],
     for i in fuzzy:
         if i < n:
             conf[i] = min(conf[i], CONF_FUZZY)
-    for marks in (ambiguous, fuzzy):
+    for i in doubtful:
+        if i < n:
+            conf[i] = min(conf[i], CONF_FUZZY)
+    for marks in (ambiguous, fuzzy, doubtful):
         if marks:
             trusted = min(trusted, max(0, min(marks) - TRIGGER_MARGIN))
     if not (clocks_checked_end and _ends_the_game(moves_san)):

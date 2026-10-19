@@ -35,6 +35,8 @@ UNDO = True            # the undo check in reconstruct
 UNDO_WINDOW_S = 6.0    # a ply reverted within this long of appearing is taken back outright
 BUNCH_UNDO = True      # ...and so is a whole bunch accepted from one reading
 FUZZY_CONFIRM_S = 2.0  # a fuzzy bunch's position read exactly this long confirms it (0 = never)
+UNREACH_BUNCH = 0.0  # a bunch accepted right after an unexplainable reading a square off ends trust (0 = off)
+RETRACT_ENDS_TRUST = 0.0  # moves accepted right after an undo/browse/detour end trust (0 = off)
 HIDDEN_KING = 1.0  # a missing king: try castling, and moves by its side are guesses (0 = off)
 PREMOVE_MAX_DIFF = 6   # a premove drawn on a move changes at most this many squares
 LOOKAHEAD_MAX_DIFF = 8      # _explains_next: the next reading must be within a move or two
@@ -103,6 +105,12 @@ class Game:
     # position wasn't seen exactly, so the moves are a best fit - trust.py
     # stops before them (a wrong such pair leaked 16 trusted plies once)
     fuzzy: list[int] = field(default_factory=list)
+    # plies accepted under doubt - right after an undo, browsing back or a
+    # detour retract (measured on 1,650 games: the first move after such an
+    # event was wrong 3-35% of the time, vs 0.3% after nothing unusual), or
+    # a bunch accepted right after an unexplainable reading a square off
+    # (UNREACH_BUNCH) - trust.py stops before them
+    doubtful: list[int] = field(default_factory=list)
 
     @property
     def ply(self) -> int:
@@ -686,9 +694,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
     pending_fuzzy: list[int] = []  # plies of the last bunch accepted a square off, awaiting an exact sighting
     pending_seen = 0.0             # ...seconds its resulting position has been read exactly since
     undone_from: int | None = None  # ply count the board just reverted to (see the undo check)
+    after_retract = False          # an undo / browse back / detour since the last accepted ply
+    after_unreach1 = False         # an unexplainable reading a square off since the last accepted ply
 
     def close(why: str = ""):
-        nonlocal current, board, history, browsing, skipped, undone_from, pending_fuzzy, pending_seen
+        nonlocal current, board, history, browsing, skipped, undone_from, pending_fuzzy, pending_seen, after_retract, after_unreach1
         if current:
             note(last_ts, f"close {why}: {current.ply} plies, {current.skipped} skipped")
         if current and current.ply >= 2:
@@ -696,12 +706,14 @@ def reconstruct(readings: list[tuple[float, str | None]],
         current, board = None, None
         history, browsing, skipped, undone_from = [], False, [], None
         pending_fuzzy, pending_seen = [], 0.0
+        after_retract = after_unreach1 = False
 
     def retract_to(k: int) -> None:
         nonlocal board
         del current.moves_san[k:], current.move_seconds[k:], history[k + 1:]
         current.ambiguous = [i for i in current.ambiguous if i < k]
         current.fuzzy = [i for i in current.fuzzy if i < k]
+        current.doubtful = [i for i in current.doubtful if i < k]
         board = chess.Board()
         for san in current.moves_san:
             board.push_san(san)
@@ -812,6 +824,8 @@ def reconstruct(readings: list[tuple[float, str | None]],
             if undo_seq:
                 note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} taken back")
                 retract_to(len(history) - 2)
+                if RETRACT_ENDS_TRUST:
+                    current.doubtful.extend(range(current.ply, current.ply + len(undo_seq)))
                 for mv in undo_seq:
                     current.moves_san.append(board.san(mv))
                     current.move_seconds.append(ts)
@@ -846,6 +860,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
             k = earlier[-1]
             note(ts, f"undo: plies {k + 1}-{n} ({' '.join(current.moves_san[k:n])}) shown briefly, taken back")
             retract_to(k)
+            after_retract = True
             misses = 0
             continue
         if earlier and (browsing or earlier[-1] == n - 1 or (n - earlier[-1]) % 2 == 0):
@@ -856,12 +871,14 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 # board sat on the old position for ten). Not browsing.
                 note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} shown briefly, taken back")
                 retract_to(n - 1)
+                after_retract = True
                 misses = 0
                 continue
             browsing = True
             if earlier[-1] == n - 1:
                 undone_from = n - 1
             note(ts, f"browsing back to ply {earlier[-1]}")
+            after_retract = True
             continue
 
         premove = _premove_display(board, target)
@@ -1010,6 +1027,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                          f"{prev.san(cands[0])} played")
                 retract_to(len(history) - 2)
                 moves, info = cands, "undo"
+                after_retract = True
 
         if moves is None:
             # a noisy / mid-animation reading - step over it and try to resync
@@ -1017,6 +1035,8 @@ def reconstruct(readings: list[tuple[float, str | None]],
             current.skipped += 1
             skipped.append(target)
             note(ts, f"skip ({info}; {_hamming(cur_placement, target)} squares off) miss {misses}")
+            if info == "unreachable" and _hamming(cur_placement, target) == 1:
+                after_unreach1 = True
             if misses >= MAX_MISSES:
                 close("too many misses")
             continue
@@ -1029,6 +1049,9 @@ def reconstruct(readings: list[tuple[float, str | None]],
         note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(moves).split()[-len(moves) * 2:]))
         if guessed:
             current.ambiguous.extend(range(current.ply, current.ply + len(moves) + guess_span))
+        if (after_retract and RETRACT_ENDS_TRUST) or (after_unreach1 and UNREACH_BUNCH and len(moves) >= 2):
+            current.doubtful.extend(range(current.ply, current.ply + len(moves)))
+        after_retract = after_unreach1 = False
         if hidden_kings:
             # where a missing king really is is a guess: a move by its side
             # could be a king move or castling in disguise
@@ -1071,6 +1094,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
             if len(set(loop_times)) < len(loop_times):
                 note(ts, f"detour: retract to ply {back}")
                 retract_to(back)
+                after_retract = True
 
         if board.is_checkmate() or board.is_stalemate():
             # no legal move exists from here - anything read after this point
