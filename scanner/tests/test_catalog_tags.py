@@ -77,3 +77,16 @@ def test_reconcile_blanks_the_opponent_when_both_sides_read_the_same():
 def test_reconcile_needs_three_narrator_reads():
     games = [_game("white", 2500, 2400), _game("white", 100, 2400)]
     assert catalog.reconcile_ratings(games) == 0
+
+
+def test_drop_final_bunch():
+    moves = ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7", "Re1", "b5", "Bb3"]
+    times = [float(i) for i in range(11)] + [20.0, 20.0]       # the last two arrived together
+    e = {"moves_san": list(moves), "move_seconds": list(times), "ply": 13, "pgn": "",
+         "clock_white_seconds": list(range(13)), "fuzzy_plies": [11], "ambiguous_plies": [3, 12]}
+    assert catalog.drop_final_bunch(e) == 2
+    assert e["moves_san"] == moves[:11] and e["ply"] == 11 and len(e["clock_white_seconds"]) == 11
+    assert "fuzzy_plies" not in e and e["ambiguous_plies"] == [3]
+    assert e["pgn"].startswith("1. e4 e5 2. Nf3") and e["pgn"].endswith("6. Re1")
+    single = {"moves_san": moves[:12], "move_seconds": [float(i) for i in range(12)], "ply": 12, "pgn": ""}
+    assert catalog.drop_final_bunch(single) == 0                # a final single move stays

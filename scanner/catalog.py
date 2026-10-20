@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -41,6 +42,43 @@ def tag(entry: dict, speedrun: bool | None = None) -> None:
 
 def _clock_seconds(values: list[float | None]) -> list[int | None]:
     return [None if v is None else int(round(v)) for v in values]
+
+
+# On after the 2026-10-20 rebuild (handoff/full1), which is merged with
+# drop_final_bunch applied afterwards; off while it runs so it stays one version.
+DROP_FINAL_BUNCH = os.environ.get("CATALOG_DROP_FINAL_BUNCH", "0") == "1"
+_PLY_MARKS = ("ambiguous_plies", "fuzzy_plies", "doubtful_plies", "rough_plies")
+
+
+def drop_final_bunch(entry: dict) -> int:
+    """Drop a game's last plies when they arrived together as one bunch (2+
+    plies at one timestamp). Measured on 1,620 benchmarked games: a quarter
+    of the games with any wrong move were wrong only in their last 1-2
+    plies, mostly such a bunch - the narrator showing a line once the game
+    was over, or the video moving on mid-game. Dropping them: every move
+    right 979 -> 1,107 games, for 464 right plies that trust held back
+    anyway (shown 1,020 -> 1,019). Returns how many plies were dropped;
+    call add_trust afterwards."""
+    times = entry["move_seconds"]
+    n = len(times)
+    start = n
+    while start > 0 and times[start - 1] == times[-1]:
+        start -= 1
+    if n - start < 2 or start < 10:
+        return 0
+    for key in ("moves_san", "move_seconds", "clock_white_seconds", "clock_black_seconds", "move_confidence"):
+        if key in entry:
+            entry[key] = entry[key][:start]
+    for key in _PLY_MARKS:
+        if key in entry:
+            kept = [i for i in entry[key] if i < start]
+            if kept:
+                entry[key] = kept
+            else:
+                del entry[key]
+    entry["ply"] = start
+    entry["pgn"] = " ".join(f"{i // 2 + 1}. {san}" if i % 2 == 0 else san for i, san in enumerate(entry["moves_san"]))
+    return n - start
 
 
 def add_trust(entry: dict) -> None:
@@ -140,6 +178,8 @@ def _entry(source: Source, game: Game, index: int, speedrun: bool | None = None)
         entry["rating_white"] = game.rating_white
     if game.rating_black is not None:
         entry["rating_black"] = game.rating_black
+    if DROP_FINAL_BUNCH:
+        drop_final_bunch(entry)
     add_trust(entry)   # last: it looks at the clock fields
     tag(entry, speedrun)
     return entry
