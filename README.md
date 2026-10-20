@@ -149,9 +149,35 @@ did, `tests/dump_readings.py VIDEO_ID` caches the per-frame board readings and
 against its real game and the readings around the first wrong move.
 `scanner/EXPERIMENTS.md` logs what has been tried.
 
-## License
+## Data and licence
 
-The code is MIT licensed (see `LICENSE`). The licence doesn't cover the videos or anything
-taken from them: `web/data/games.json` holds factual records about other people's videos
-(moves, clocks, ratings, titles and links), and the transcripts, which are the channels' own
-work, stay local and out of the repo.
+The code is MIT licensed (see `LICENSE`). The licence covers the code only: not the videos,
+and not anything taken from them.
+
+The catalog in `web/data/games.json` is the one piece of scanned data in the repo. It is a
+set of factual records about other people's videos: the moves, clocks and ratings of each
+game, with the video's title, channel and a link back to it.
+
+Everything else the scanner gathers lives in `scanner/cache/`. That folder stays out of git,
+partly because it is large (mostly the videos) and partly because most of it is other
+people's work, which isn't ours to publish:
+
+| In `scanner/cache/` | What it is |
+| --- | --- |
+| `<video_id>.webm` / `.mkv` / `.mp4` | the downloaded videos |
+| `<video_id>.info.json` | YouTube's metadata for each video (title, channel, upload date, description) |
+| `<video_id>-readings.json` | the board read from every sampled frame; rebuilds start from these instead of the video |
+| `transcripts/<video_id>.json` | each video's YouTube captions, as timed segments |
+| `hires/` | full-resolution frames, kept for reading the players' ratings |
+| `truth/` | the real games, from chess.com and lichess, that `tests/benchmark.py` scores against |
+
+None of it has to be shared, because you can rebuild it yourself. Rescanning the catalogued
+videos downloads them again and recreates the metadata, readings, transcripts and frames:
+
+```sh
+scanner/.venv/bin/python scanner/tests/rescan.py --out /tmp/rescanned.json   # every video in the catalog
+scanner/.venv/bin/python scanner/tests/benchmark.py                          # fetches the real games into truth/
+```
+
+A video that has since been taken down can't be rebuilt, and a rescan uses the current
+scanner, so its games may differ slightly from the published ones.
