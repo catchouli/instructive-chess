@@ -178,3 +178,37 @@ Ne2 in the Kinder Surprise). The sample is small, so the shares are rough.
 Next: measure where in a game the instructive commentary is (by ply and by video type),
 using a cheap model to sort segments into instructive and chatter (a z.ai GLM-5.3-flash key
 is available, kept in an environment variable, never in the repo).
+
+### 2026-10-21: sorting with GLM-5.3-flash (in progress)
+
+- `assistant/units.py VIDEO_ID`: each game's commentary cut into **units**, what was said while
+  one position was on the board (a segment goes to the position at its midpoint). 57,004 units
+  in 193 videos, 28,838 from trusted plies. Most units are fragments of a sentence.
+- `assistant/classify.py VIDEO_ID ...`: sends units to z.ai in batches of 12 consecutive units of
+  a game, and labels each as instructive, move-calling or chatter. Instructive units also get
+  `topics` and a one-line `idea` in clean SAN. Output goes to `assistant/cache/labels/<video>.json`
+  with token counts. Needs `ZAI_API_KEY` exported (pay-as-you-go key). The User-Agent is
+  `$ASSISTANT_USER_AGENT` (default `whittle`) and the number of requests in flight is
+  `$ASSISTANT_WORKERS` (default 2).
+- **API quirks:** GLM-5.3-flash always thinks, so the script sends
+  `"thinking": {"type": "enabled", "effort": "low"}` (`disabled` is refused). 30-unit
+  batches took over 3 minutes, past the timeout. 6 requests in flight hit "1302 Rate limit
+  reached", so the default is now 2. That's untested: find the highest that works.
+- **One video done** (85-Uv_kRoFw, 1 game, 19 units): 1,585 in / 5,813 out tokens (most
+  of it thinking), about $0.003 at the list price ($0.15/M in, $0.50/M out, secondhand; check
+  z.ai's own page). The labels look right: the Dutch d3 line, Black's plan of developing the
+  bishop, castling and ...Qg6, and the ...d4 pawn sac with its reason.
+- **Validation set:** 80 random units (seed 20261021) in `assistant/cache/sample80.jsonl`,
+  labelled by hand **before** any model saw them, in `sample80_cat_claude.json`: 20 instructive
+  (25%), 48 move-calling (60%), 12 chatter (15%). The instructive share is lower than the
+  earlier 44% by visit, because units are smaller.
+
+Next:
+1. Rerun `classify.py 5M0c_EwRQiI` (Naroditsky, many games) to measure the time and cost of a
+   full video, and tune `ASSISTANT_WORKERS`.
+2. Label the 64 videos in the sample, then score GLM against `sample80_cat_claude.json`.
+   Trust it on the rest if it agrees about 80% of the time or more, and list where it disagrees.
+3. If it holds up, label all 193 videos and measure the instructive share by ply, narrator,
+   and stream versus recorded video.
+4. Group the `idea`s by opening and pawn structure, and draft London and Sicilian summaries
+   with citations for Cat to judge.
