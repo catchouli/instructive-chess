@@ -54,6 +54,27 @@ Tuesday" streams), Daniel Naroditsky (`danielnaroditsky`), John Bartholomew
   whole library. Several ideas that helped on 3 videos were neutral or worse
   on all 52.
 
+### Iterating fast (2026-10-20)
+
+Use the cheapest stage that a change touches; run the whole library only before a merge.
+
+| change to | how | time |
+|---|---|---|
+| trust rules (what's trusted, not which moves) | `tests/trust_replay.py replay LOG` on a log built once with `build` (rebuild the log after any reconstruct change) | seconds, all games |
+| reconstruct | `ab_par`-style A/B over cached readings on `tests/sets/hard.txt` + `guard.txt` | ~20-40 min |
+| clocks | `tests/rescore.py --no-ratings --catalog C` on the failing games' ids | minutes |
+| ratings | `tests/rescore.py --catalog C`: hi-res frames come from `cache/hires/` after the first fetch | minutes |
+| board reading | `tests/dump_batch.py` (re-reads video), then rebuild | hours: batch these |
+
+`tests/sets/hard.txt`: the videos of every known failure (the trust leaks, the worst videos per
+platform for moves, clocks and ratings). `tests/sets/guard.txt`: 20 videos sampled by channel
+(seed 20261020) to catch regressions. Keep both fixed so results stay comparable over time.
+Cap decoder threads in parallel runs (`FFMPEG_THREADS=2`, `OMP_THREAD_LIMIT=1`) and keep the
+job total at or below the cores (16): ffmpeg takes ~5 cores a decode by default.
+
+Exception to "don't edit while it runs": the 2026-10-20 full rebuild (`handoff/full1`) took
+in-process Tesseract and the hi-res frame cache mid-run; both give identical output (checked).
+
 ## Current state (2026-10-15)
 
 Live catalog: **354 games from 76 videos**, 241 listed (12+ trusted plies), 337 matched: **0 wrong trusted of 8,831 plies**, whole opening trusted in 45%. Added: the 18 library videos re-read after the re-fit gate, and 18 of the 141-video tournament batch (the rest are read but not yet reconstructed, see HANDOFF.md). One new game (Aig9-ZyQ8Ak game 4) had 4 wrong trusted plies (14-17) and was left out; not yet traced.
