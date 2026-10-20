@@ -111,6 +111,9 @@ class Game:
     # a bunch accepted right after an unexplainable reading a square off
     # (UNREACH_BUNCH) - trust.py stops before them
     doubtful: list[int] = field(default_factory=list)
+    # first plies of bunches accepted right after an unexplainable reading a
+    # square off: where trust ends just after one, trust.py backs off to it
+    rough: list[int] = field(default_factory=list)
 
     @property
     def ply(self) -> int:
@@ -714,6 +717,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
         current.ambiguous = [i for i in current.ambiguous if i < k]
         current.fuzzy = [i for i in current.fuzzy if i < k]
         current.doubtful = [i for i in current.doubtful if i < k]
+        current.rough = [i for i in current.rough if i < k]
         board = chess.Board()
         for san in current.moves_san:
             board.push_san(san)
@@ -824,6 +828,8 @@ def reconstruct(readings: list[tuple[float, str | None]],
             if undo_seq:
                 note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} taken back")
                 retract_to(len(history) - 2)
+                # a bunch of its own, for tests/trust_replay.py
+                note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(undo_seq).split()[-len(undo_seq) * 2:]))
                 if RETRACT_ENDS_TRUST:
                     current.doubtful.extend(range(current.ply, current.ply + len(undo_seq)))
                 for mv in undo_seq:
@@ -1051,6 +1057,8 @@ def reconstruct(readings: list[tuple[float, str | None]],
             current.ambiguous.extend(range(current.ply, current.ply + len(moves) + guess_span))
         if (after_retract and RETRACT_ENDS_TRUST) or (after_unreach1 and UNREACH_BUNCH and len(moves) >= 2):
             current.doubtful.extend(range(current.ply, current.ply + len(moves)))
+        if after_unreach1:
+            current.rough.append(current.ply)
         after_retract = after_unreach1 = False
         if hidden_kings:
             # where a missing king really is is a guess: a move by its side

@@ -51,7 +51,8 @@ def add_trust(entry: dict) -> None:
                                                                   clocks_checked_end=both_clocks,
                                                                   ambiguous=entry.get("ambiguous_plies", ()),
                                                                   fuzzy=entry.get("fuzzy_plies", ()),
-                                                                  doubtful=entry.get("doubtful_plies", ()))
+                                                                  doubtful=entry.get("doubtful_plies", ()),
+                                                                  rough=entry.get("rough_plies", ()))
 
 
 NARRATOR_RATING_SPREAD = 250   # a narrator's rating moves less than this within one video
@@ -124,6 +125,8 @@ def _entry(source: Source, game: Game, index: int, speedrun: bool | None = None)
         entry["fuzzy_plies"] = list(game.fuzzy)
     if game.doubtful:
         entry["doubtful_plies"] = list(game.doubtful)
+    if game.rough:
+        entry["rough_plies"] = list(game.rough)
     # Only present when clock reading found a usable clock for this game -
     # older/unread entries simply omit these rather than carry an all-null
     # array, so the web app can tell "not attempted" from "attempted, empty".

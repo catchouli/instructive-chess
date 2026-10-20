@@ -42,6 +42,7 @@ LATE_PLY = 34          # past here, any bunch (2+) ends trust
 TRIGGER_MARGIN = 2     # trust ends this many plies before such a bunch
 TAIL_PLIES = 2         # always hold back this many final plies (unless mate)
 LATE_TAIL_PLIES = 4    # ...and this many, past LATE_PLY
+ROUGH_BACKOFF = 5      # trust ending this soon after a rough ply ends at it instead
 
 # Chance a move is right, by how it was confirmed (the calibration above).
 CONF_SINGLE = 0.996
@@ -79,7 +80,8 @@ CONF_FUZZY = 0.9       # a bunch accepted from a reading a square off (reconstru
 
 def assess(moves_san: list[str], move_seconds: list[float],
            clocks_checked_end: bool = False, ambiguous: list[int] = (),
-           fuzzy: list[int] = (), doubtful: list[int] = ()) -> tuple[list[float], int]:
+           fuzzy: list[int] = (), doubtful: list[int] = (),
+           rough: list[int] = ()) -> tuple[list[float], int]:
     """(per-move confidence, trusted_ply) for one game. `clocks_checked_end`:
     both clocks were read, so clock_read.live_move_count has already checked
     that a final mate happened with a clock running - only then does a mate
@@ -90,7 +92,13 @@ def assess(moves_san: list[str], move_seconds: list[float],
     same treatment (a wrong such pair leaked 16 trusted plies). `doubtful`:
     plies accepted under doubt (after an undo, browsing back or a detour, or
     a bunch after an unexplainable reading; see reconstruct.Game.doubtful) -
-    the same again."""
+    the same again. `rough`: first plies of bunches accepted right after an
+    unexplainable reading a square off (reconstruct.Game.rough). Too common
+    to end trust on their own (measured: 55% of whole openings lost), but
+    every wrong trusted move left in 1,620 benchmarked games came 1-5 plies
+    before where trust already ended, just after one or more of these - so
+    trust ending within ROUGH_BACKOFF plies after one ends at it instead
+    (9 such games -> 0, for 4.5% fewer games shown)."""
     n = len(moves_san)
     bunches = _bunches(move_seconds)
     conf = []
@@ -121,4 +129,7 @@ def assess(moves_san: list[str], move_seconds: list[float],
         for i in range(max(0, tail_start), n):
             conf[i] = min(conf[i], CONF_TAIL)
         trusted = min(trusted, tail_start)
+    near = [i for i in rough if trusted - ROUGH_BACKOFF <= i < trusted]
+    if near:
+        trusted = min(near)
     return [round(c, 3) for c in conf], max(0, trusted)

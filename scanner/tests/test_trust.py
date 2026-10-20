@@ -41,3 +41,10 @@ def test_a_fuzzy_bunch_ends_trust_before_it():
     conf, trusted = trust.assess(sans, secs, fuzzy=[8, 9])
     assert trusted == 8 - trust.TRIGGER_MARGIN
     assert conf[8] <= trust.CONF_FUZZY and conf[9] <= trust.CONF_FUZZY
+
+
+def test_trust_ending_just_after_a_rough_ply_ends_at_it():
+    times = list(range(len(MOVES)))                     # trusted up to the last two: 10
+    assert trust.assess(MOVES, times, rough=[7])[1] == 7
+    assert trust.assess(MOVES, times, rough=[3])[1] == 10     # too far back to matter
+    assert trust.assess(MOVES, times, rough=[10])[1] == 10    # past where trust ends anyway

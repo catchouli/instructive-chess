@@ -97,6 +97,10 @@ def iter_frames(path: Path, fps: float, start: float, end: float):
     tmp = Path(tempfile.mkdtemp(prefix="instructive-chess-"))
     try:
         cmd = ["ffmpeg", "-nostdin", "-v", "error"]
+        # ffmpeg decodes on ~5 cores by default; parallel jobs cap it so
+        # their total stays within the machine's cores
+        if os.environ.get("FFMPEG_THREADS"):
+            cmd += ["-threads", os.environ["FFMPEG_THREADS"]]
         if start > 0:
             cmd += ["-ss", f"{start:.3f}"]
         if end > 0:

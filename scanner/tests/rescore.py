@@ -6,6 +6,7 @@ rescan, since a game's moves don't depend on either.
     scanner/.venv/bin/python scanner/tests/rescore.py --matched   # every benchmark-matched game
     ... --no-ratings   clocks only (ratings fetch a high-res frame from YouTube)
     ... --write        also store the new clocks/ratings in web/data/games.json
+    ... --catalog P    read (and with --write, update) another catalog
 
 Needs each game's video in scanner/cache/.
 """
@@ -110,9 +111,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--write", action="store_true", help="store the new clocks/ratings in the catalog")
     ap.add_argument("--out", type=Path, help="with --write: write the updated catalog here instead")
     ap.add_argument("--jobs", type=int, default=6, help="games rescored in parallel (default 6)")
+    ap.add_argument("--catalog", type=Path, default=catalog.DATA_FILE, help="catalog to read (default web/data/games.json)")
     args = ap.parse_args(argv)
 
-    games = json.loads(catalog.DATA_FILE.read_text())
+    games = json.loads(args.catalog.read_text())
     by_id = {g["id"]: g for g in games}
     ids = list(args.ids)
     cand_cache: dict[str, list] = {}
@@ -176,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_ratings:
         print(f"ratings OK:       {totals['ratings'][0]} -> {totals['ratings'][1]}")
     if args.write:
-        out = args.out or catalog.DATA_FILE
+        out = args.out or args.catalog
         tmp = out.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(games, indent=2, ensure_ascii=False) + "\n")
         tmp.replace(out)
