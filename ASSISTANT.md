@@ -101,12 +101,21 @@ the assistant publishes should be built from them, never the transcripts themsel
 
 ## First steps
 
+The scanner is limited by CPU; the assistant mostly isn't (data work and language-model calls on
+the API; engine scoring is the exception, capped at 1-2 cores). So the assistant is built in the
+gaps while scanner batches run, without slowing the scanner down.
+
+
 1. **Measure coverage:** for each position after N moves, how many videos and narrators reach
    it. That shows where commentary is already dense and where it's thin.
 2. **Line commentary up with positions:** for each transcript segment, the position on the
    board (and the last move) at that time, allowing for commentary that lags a move by
    seconds or comes before it ("I'm going to play Nf3 here").
-3. **A first prototype** on the densest openings: gather everything said about a position
-   and its neighbours, and summarise it with a language model, citing the videos and
-   timestamps it came from.
-4. **Then** add structure grouping, engine scoring and weighting.
+3. **A first prototype, by hand:** for the 5-10 densest positions, gather everything said
+   within a few seconds of the position appearing, across all videos, and write the
+   distilled summary in a Claude session. That shows whether there is real insight in there
+   before anything is automated, and shows the problems (mangled notation, lagging
+   comments, small talk) early.
+4. **If it's promising,** automate step 3 with language-model calls, citing the videos and
+   timestamps each idea came from.
+5. **Then** add structure grouping, engine scoring and weighting.

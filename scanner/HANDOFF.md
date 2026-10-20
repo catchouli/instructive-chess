@@ -49,6 +49,10 @@ trusted move is the hard bar for merging. On 168 rebuilt videos: moves 73.1%, ra
 
 ## Next
 
+- **Alongside scanner batches: the assistant prototype** (`ASSISTANT.md`, "First steps" 1-3).
+  Measuring coverage, aligning transcripts to positions and a hand-distilled summary of the
+  densest positions need almost no CPU, so they run while a batch does.
+
 - lichess ratings: read fine from the right clock boxes (checked on a frame); the misses should
   mostly go with the clock fixes. Measure on the rebuild before working on them.
 - Keep total jobs at or below 16 cores.
