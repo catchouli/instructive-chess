@@ -1,6 +1,6 @@
 # Instructive Chess
 
-**Live site: https://catchouli.github.io/instructive-chess/**
+**Live site: https://instructivechess.com/**
 
 <p>
   <a href="screenshots/home.png"><img src="screenshots/thumbs/home.png" width="32%" alt="Catalog of recent games"></a>
