@@ -40,6 +40,13 @@ replay) and clocks to be much better (lichess especially).
 - `FFMPEG_THREADS` caps ffmpeg's decode threads (default ~5 a decode). Use 2 in parallel runs.
 - `tests/sets/hard.txt` + `guard.txt`, and "Iterating fast" in EXPERIMENTS.md.
 
+## Targets (Cat, 2026-10-20)
+
+Share of matched games passing each `tests/benchmark.py` check: **moves 95%** (every move right),
+**ratings 80%** (both ±20), **clocks 80%** (95% of values ±2s). Separately, 0 games with a wrong
+trusted move is the hard bar for merging. On 168 rebuilt videos: moves 73.1%, ratings 77.6%
+(lichess 52.7%), clocks 83.4%.
+
 ## Next
 
 - lichess ratings: read fine from the right clock boxes (checked on a frame); the misses should
