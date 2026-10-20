@@ -685,3 +685,19 @@ def test_live_move_count_keeps_a_real_mate():
     white = _ticking([(t, 400 - min(t, 392) + 100) for t in range(100, 400)])
     black = _ticking([(t, 300.0) for t in range(100, 400)])
     assert live_move_count(moves, {"white": white, "black": black}, game_over_after=lambda n: n == 8) == 8
+
+
+def test_tallest_line_keeps_the_clock_digits_not_the_name_row():
+    # lichess: a motion-found box around the clock, its time bar and the name row
+    import cv2
+    import clock_read
+    crop = np.full((81, 152), 40, np.uint8)
+    cv2.putText(crop, "02:44", (8, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 230, 3)
+    crop[47:49, :] = 120                                    # the time bar
+    cv2.putText(crop, "SR83", (30, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.5, 230, 1)
+    line = clock_read._tallest_line(crop)
+    assert line is not None and line.shape[0] < 50
+    assert clock_read._ocr_seconds(line) == 164
+    one_line = np.full((40, 152), 40, np.uint8)
+    cv2.putText(one_line, "02:44", (8, 32), cv2.FONT_HERSHEY_SIMPLEX, 1.2, 230, 3)
+    assert clock_read._tallest_line(one_line) is None       # nothing to cut

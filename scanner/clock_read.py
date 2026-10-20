@@ -1017,9 +1017,37 @@ def _widget_interior_for_ocr(big: np.ndarray, delta: int = 40) -> np.ndarray | N
     return _clean_for_ocr(big[y0:y1, x0:x1])
 
 
+def _tallest_line(crop: np.ndarray) -> np.ndarray | None:
+    """The tallest line of text in a crop more than one line tall. A box
+    found by motion can take in lichess's shrinking time bar and the name
+    row under the clock (confirmed: Jqz9fdHOrPQ, a 152x81 box around a
+    37-px clock, read nothing for 11 of 42 moves); the clock's digits are
+    the biggest text in its widget. Text is the minority side of an Otsu
+    split, whichever its polarity."""
+    _, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    ink = bw > 0 if (bw > 0).mean() < 0.5 else bw == 0
+    rows = np.nonzero(ink.mean(axis=1) > 0.02)[0]
+    if len(rows) == 0:
+        return None
+    lines, start = [], rows[0]
+    for a, b in zip(rows, rows[1:]):
+        if b - a > 1:
+            lines.append((start, a))
+            start = b
+    lines.append((start, rows[-1]))
+    if len(lines) < 2:
+        return None
+    top, bot = max(lines, key=lambda ln: ln[1] - ln[0])
+    if bot - top < crop.shape[0] // 4:
+        return None
+    pad = max(2, (bot - top) // 4)
+    return crop[max(0, top - pad):bot + pad + 1]
+
+
 def _ocr_seconds(crop: np.ndarray) -> float | None:
     """One clock crop -> seconds, or None: the plain upscaled crop first,
-    then the edge-cleaned and widget-interior fallbacks (see each)."""
+    then the edge-cleaned, widget-interior and tallest-line fallbacks (see
+    each)."""
     if crop.size == 0:
         return None
     big = cv2.resize(crop, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC)
@@ -1030,9 +1058,17 @@ def _ocr_seconds(crop: np.ndarray) -> float | None:
         inner = _widget_interior_for_ocr(big)
         if inner is not None:
             seconds = _parse_clock_text(_tesseract_line(inner))
+    if seconds is None and TALLEST_LINE:
+        line = _tallest_line(crop)
+        if line is not None:
+            line = cv2.resize(line, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC)
+            seconds = _parse_clock_text(_tesseract_line(line))
+            if seconds is None:
+                seconds = _parse_clock_text(_tesseract_line(_clean_for_ocr(line)))
     return seconds
 
 
+TALLEST_LINE = os.environ.get("CLOCK_TALLEST_LINE", "1") == "1"   # last fallback: OCR only the tallest text line (see _tallest_line)
 WIDEN_LEFT = os.environ.get("CLOCK_WIDEN_LEFT", "1") == "1"   # retry a failed read with the crop widened leftwards (see read_clock_ocr)
 
 
