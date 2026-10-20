@@ -5,7 +5,7 @@ with what happened just before each accepted bunch, and every rule replayed
 on that log.
 
     scanner/.venv/bin/python scanner/tests/trust_replay.py build LOG.json VIDEO_ID [...] [--jobs N]
-    scanner/.venv/bin/python scanner/tests/trust_replay.py replay LOG.json [--clocks CATALOG] RULE[+RULE] [...]
+    scanner/.venv/bin/python scanner/tests/trust_replay.py replay LOG.json [--clocks CATALOG] [--marks CATALOG] RULE[+RULE] [...]
 
 `build` reconstructs each video from its cached readings (the doubtful rules
 off) and scores each game against its real game. `replay` prints, per rule
@@ -14,7 +14,12 @@ plies, shown (12+ trusted) and whole openings. `--clocks` takes clock
 presence from a catalog (by video + start), since trust ends earlier
 without both clocks; without it, no game has clocks. trust.py's back-off
 to rough plies (reconstruct.Game.rough) is always applied; set
-trust.ROUGH_BACKOFF = 0 to see the rules without it.
+trust.ROUGH_BACKOFF = 0 to see the rules without it. `--marks` takes each
+game's move times and ambiguous/fuzzy plies from a scanned catalog where its
+moves match the log: the log is built without refine.py, whose split bunches
+no longer end trust, so without it a rule's leaks are judged on bunches the
+real pipeline doesn't have (three "fixed" leaks came back in the 2026-10-20
+rebuild this way).
 """
 from __future__ import annotations
 
@@ -123,8 +128,30 @@ def rough(game: dict) -> list[int]:
     return [a for a, ctx in game["bunches"] if "unreach1" in ctx]
 
 
-def replay(log: Path, rule_sets: list[str], clocks: Path | None) -> None:
+def apply_marks(games: list[dict], catalog: Path) -> tuple[list[dict], int]:
+    """Games whose moves match a catalog entry's (same video, start within
+    10 s; the entry may be shorter, e.g. catalog.drop_final_bunch), with that
+    entry's times and marks and the log's bunch contexts. Others dropped."""
+    by_vid: dict[str, list[dict]] = {}
+    for e in json.loads(catalog.read_text()):
+        by_vid.setdefault(e["video_id"], []).append(e)
+    out = []
+    for g in games:
+        for e in by_vid.get(g["video_id"], []):
+            n = len(e["moves_san"])
+            if abs(e["move_seconds"][0] - g["start_seconds"]) < 10 and g["moves_san"][:n] == e["moves_san"]:
+                out.append({**g, "moves_san": e["moves_san"], "move_seconds": e["move_seconds"],
+                            "ambiguous_plies": e.get("ambiguous_plies") or [], "fuzzy_plies": e.get("fuzzy_plies") or [],
+                            "correct": min(g["correct"], n), "bunches": [b for b in g["bunches"] if b[0] < n]})
+                break
+    return out, len(games) - len(out)
+
+
+def replay(log: Path, rule_sets: list[str], clocks: Path | None, marks: Path | None = None) -> None:
     games = json.loads(log.read_text())
+    if marks:
+        games, dropped = apply_marks(games, marks)
+        print(f"times and marks from {marks}: {len(games)} games ({dropped} whose moves differ dropped)")
     has_clocks = set()
     if clocks:
         for e in json.loads(clocks.read_text()):
@@ -167,11 +194,12 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("log", type=Path)
     r.add_argument("rules", nargs="*", help=f"rule names joined by '+': {', '.join(RULES)}")
     r.add_argument("--clocks", type=Path)
+    r.add_argument("--marks", type=Path, help="take move times and ambiguous/fuzzy plies from this catalog")
     args = ap.parse_args(argv)
     if args.cmd == "build":
         build(args.log, args.vids, args.jobs)
     else:
-        replay(args.log, args.rules, args.clocks)
+        replay(args.log, args.rules, args.clocks, args.marks)
     return 0
 
 
