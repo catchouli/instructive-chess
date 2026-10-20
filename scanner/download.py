@@ -4,6 +4,7 @@ Downloads land in scanner/cache/ and are reused on subsequent runs.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -142,6 +143,22 @@ def fetch_hires_frame(url: str, timestamp: float, max_height: int = 1080) -> np.
     best-effort philosophy."""
     if not _looks_like_url(url):
         return None
+    # Kept losslessly once fetched, so a rescan reads ratings without the
+    # network (~10-45 s a fetch; up to three per game)
+    key = hashlib.sha1(f"{url}|{timestamp:.2f}|{max_height}".encode()).hexdigest()[:16]
+    cached = CACHE / "hires" / f"{key}.png"
+    if cached.exists():
+        return cv2.imread(str(cached))
+    frame = _fetch_hires_frame(url, timestamp, max_height)
+    if frame is not None:
+        cached.parent.mkdir(exist_ok=True)
+        tmp = cached.with_suffix(".tmp.png")
+        cv2.imwrite(str(tmp), frame, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+        tmp.replace(cached)
+    return frame
+
+
+def _fetch_hires_frame(url: str, timestamp: float, max_height: int) -> np.ndarray | None:
     start = max(0.0, timestamp - 2.0)
     with tempfile.TemporaryDirectory() as tmp_str:
         tmp = Path(tmp_str)

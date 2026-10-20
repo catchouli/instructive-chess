@@ -174,6 +174,7 @@ and recalibrate as the library grows (it needed it once already).
 | "Messy stretch": end trust once m events (unexplainable reading a square off, undo, browse, detour, fuzzy-ambiguous) land within W plies (grid W 4-20, m 2-4) | Best: 9 → 1 for −533 of 729 openings. These events are everywhere in streams | **No** |
 | Back off where trust already ends: to the earliest bunch after an unexplainable reading a square off within the 5 plies before the cut (`trust.ROUGH_BACKOFF`, `rough_plies`). Every leak's first wrong move was 1-5 plies before the cut | Replayed on 1,620 games: wrong trusted games **9 → 0**; shown 1,068 → 1,020 (−4.5%), whole openings 729 → 637 (−12.6%), trusted plies −8.7%. Window 4: 9 → 1 for −30 shown, −53 openings. Undo/browse/detour in the event set: no difference. Uniform back-off of 5 plies: 0 leaks for −188 openings. Tuned on 9 leaks: to be confirmed by the full rebuild | Yes (5) |
 | Clock OCR in-process (tesserocr) instead of pytesseract's process per call (`clock_read._tesseract_line`, `TESSERACT_INPROC`) | ~25 ms vs ~104 ms a call under load; clock tests 4:03 → 2:04, all 53 pass both ways; 397/400 random crops from 5 channels give identical text (3 differ only in spaces inside junk), parsed clock values 0/400 differ | Yes |
+| Cache the hi-res rating frames losslessly (`download.fetch_hires_frame`, `scanner/cache/hires/`) | 10.3 s fetch → 0.03 s from disk, identical pixels. A rescan or ratings rescore no longer needs the network | Yes |
 
 ## Clocks
 
