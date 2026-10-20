@@ -48,5 +48,5 @@ replay) and clocks to be much better (lichess especially).
 
 ## Transcripts
 
-`transcripts/<video_id>.json`, saved by `scan.py` for every new video. Fetch one at a time
+`scanner/cache/transcripts/<video_id>.json` (local only, not in git), saved by `scan.py` for every new video. Fetch one at a time
 (YouTube answers 429 to parallel requests).

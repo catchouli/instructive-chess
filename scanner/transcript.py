@@ -7,8 +7,9 @@ commentary can later be lined up with the moves the scanner timed.
     scanner/.venv/bin/python scanner/transcript.py --all      # every video in the catalog
     ... --force    refetch ones already saved
 
-Written to transcripts/<video_id>.json (in git - a two-hour stream is
-~100-150 KB):
+Written to scanner/cache/transcripts/<video_id>.json (a two-hour stream is
+~100-150 KB). Kept out of git: the captions are the channels' work, not ours
+to publish under the repo's licence.
 
     {"video_id": ..., "lang": "en", "kind": "auto" | "manual",
      "fetched": "YYYY-MM-DD", "duration": <video seconds>,
@@ -36,7 +37,7 @@ from pathlib import Path
 import download
 
 ROOT = Path(__file__).resolve().parents[1]
-TRANSCRIPTS = ROOT / "transcripts"
+TRANSCRIPTS = ROOT / "scanner" / "cache" / "transcripts"
 CATALOG = ROOT / "web" / "data" / "games.json"
 LANG = "en"
 
@@ -90,7 +91,7 @@ def fetch(target: str, lang: str = LANG) -> dict | None:
 
 
 def save(target: str, out_dir: Path = TRANSCRIPTS, force: bool = False) -> Path | None:
-    """Fetch and write transcripts/<video_id>.json; None when the video has
+    """Fetch and write TRANSCRIPTS/<video_id>.json; None when the video has
     no transcript. An existing file is kept unless *force*."""
     vid = download.video_id_from_url(target) if download._looks_like_url(target) else target
     out = out_dir / f"{vid}.json"

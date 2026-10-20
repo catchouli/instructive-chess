@@ -114,7 +114,7 @@ rescanning.
 ### Transcripts
 
 `scan.py` also saves the video's YouTube transcript (the uploader's captions if any,
-else the automatic ones) to `transcripts/<video_id>.json` as timed segments, so the
+else the automatic ones) to `scanner/cache/transcripts/<video_id>.json` as timed segments, so the
 narrator's commentary can be lined up with the moves later via each ply's
 `move_seconds`. Backfill or refetch with:
 
@@ -148,3 +148,10 @@ did, `tests/dump_readings.py VIDEO_ID` caches the per-frame board readings and
 `tests/trace_video.py VIDEO_ID --readings` replays them with a trace, showing each game
 against its real game and the readings around the first wrong move.
 `scanner/EXPERIMENTS.md` logs what has been tried.
+
+## License
+
+The code is MIT licensed (see `LICENSE`). The licence doesn't cover the videos or anything
+taken from them: `web/data/games.json` holds factual records about other people's videos
+(moves, clocks, ratings, titles and links), and the transcripts, which are the channels' own
+work, stay local and out of the repo.
