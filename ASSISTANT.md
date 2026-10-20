@@ -94,10 +94,22 @@ just the narrators' favourites.
   different repertoires, not just more videos from the same ones. Today: GingerGM, John
   Bartholomew and Daniel Naroditsky, as well as Eric Rosen.
 
-## Copyright
+## Copyright and sources
 
 The transcripts are the channels' own work, so they stay local and out of the repo. What
-the assistant publishes should be built from them, never the transcripts themselves.
+the assistant publishes should be built from them, never the transcripts themselves, and
+every idea it gives should cite and link the video and timestamp it came from, so the
+assistant sends people to the creators.
+
+**Paid courses and books are out.** Distilling them is much closer to taking the product than
+distilling commentary given away for free, and it would be controversial at a time when
+opinion on AI and training data is split. Free, public commentary only. Eventually it may be
+worth asking the narrators directly (Eric Rosen first): their blessing would remove most of the
+risk, and they might like the idea.
+
+More data will be needed. These players play a lot of chess and don't comment on every move,
+so a common position is commented on rarely. That argues for more channels and the stream
+archives (@EricRosenExtra), not paid material.
 
 ## First steps
 
@@ -145,6 +157,23 @@ First targets: **the London** (296 games in 77 videos, nearly all Eric Rosen as 
 Sicilian** (161 games in 99 videos: Eric Rosen on both sides, GingerGM, John Bartholomew and
 Naroditsky as Black). Cat plays both, so can judge whether a summary is any good. The Sicilian
 has more narrators, so it's the better test of distilling across people.
+
+**A random sample says the data is useful, just not at the opening positions.** 60 random
+visits to trusted positions across all games and phases, each position's own time on the
+board, sorted by hand (59 had something said):
+
+| Kind | Share |
+| --- | --- |
+| Instructive: plans, ideas, why a move, evaluations ("I'm trying to open up the b-file. Why is it important…") | ~44% |
+| Move-calling or a bare evaluation ("Okay, let's take on h5. Queen b3.") | ~32% |
+| Chatter | ~24% |
+
+The chatter is concentrated in the first ~8 plies. From the early middlegame on, the narrators
+mostly think aloud, and the recorded videos (GingerGM, Naroditsky) explain more than the
+streams. So a given position is commented on rarely, but plans and ideas recur: grouping by
+structure and plan, not only exact position, is what should make this work. Opening knowledge
+shows up occasionally ("there's some theory in this line, h5 is good to know"; Magnus playing
+Ne2 in the Kinder Surprise). The sample is small, so the shares are rough.
 
 Next: measure where in a game the instructive commentary is (by ply and by video type),
 using a cheap model to sort segments into instructive and chatter (a z.ai GLM-5.3-flash key
