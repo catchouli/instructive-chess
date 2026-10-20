@@ -46,7 +46,7 @@ def _clock_seconds(values: list[float | None]) -> list[int | None]:
 
 # On after the 2026-10-20 rebuild (handoff/full1), which is merged with
 # drop_final_bunch applied afterwards; off while it runs so it stays one version.
-DROP_FINAL_BUNCH = os.environ.get("CATALOG_DROP_FINAL_BUNCH", "0") == "1"
+DROP_FINAL_BUNCH = os.environ.get("CATALOG_DROP_FINAL_BUNCH", "1") == "1"
 _PLY_MARKS = ("ambiguous_plies", "fuzzy_plies", "doubtful_plies", "rough_plies")
 
 

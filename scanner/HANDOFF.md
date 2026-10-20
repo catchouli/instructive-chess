@@ -1,32 +1,45 @@
-# Handoff: where work is (2026-10-20, 05:20)
+# Handoff: where work is (2026-10-20, evening)
 
-Running unattended. Saved state is in `scanner/cache/handoff/` (gitignored).
+Saved state is in `scanner/cache/handoff/` (gitignored).
 
-## Live site / git
+## Live site
 
-- `web/data/games.json` is still the 354-game catalog (76 videos) from 2026-10-15. Nothing new merged yet.
-- Pushed up to `d98e47c`. Local, unpushed: `c871b70` onwards (push only when Cat asks).
+`web/data/games.json` is the 2026-10-20 rebuild: **1,774 games from 193 videos, 1,187 listed**
+(12+ trusted plies). It was 354 games (76 videos, 241 listed) before. Benchmark
+(`handoff/merge2/bm.txt`), 1,653 games matched to a real game:
 
-## Running now: the full rebuild that becomes the merge
+| | before (merge1 candidate) | now |
+| --- | --- | --- |
+| Wrong trusted (shown) games | 10 | **0** (0 of 44,588 trusted plies) |
+| Every move right | 72.7% | 72.8% |
+| Clocks (95% of values ±2s) | 63.9% | **82.5%** (lichess 30.4% → 74.5%) |
+| Ratings (both ±20) | 74.2% | 76.9% (lichess 55.4%) |
+| Listed games | 1,227 | 1,187 (−3.3%) |
+| Whole 15-move openings trusted | 886 | 736 (−17%) |
+| Trusted plies | 50,090 | 44,588 (−11%) |
 
-Every video rebuilt from its saved readings with the final code (moves, refine, clocks, ratings,
-trust), so the merge is one consistent catalog. Three runs, all `tests/rescan.py --from-readings`:
+The losses are the two new trust rules (rough back-off, undo/detour), the price of 10 → 0.
+No game had to be hidden: the full benchmark found no leak.
 
-- `handoff/full1/`: 189 videos (`handoff/ab_unreach_vids.txt`), 10 jobs. Started 02:52.
-- `handoff/full1b/`: the 5 freshly re-read videos. **Obsolete**: started before the clock fallback.
-- `handoff/full1c/`: the 53 videos that started before the clock tallest-line fallback was
-  switched on at 05:17 (`full1c/vids.txt`: `full1/before_tallest.txt` + the 5 re-reads), 4 jobs.
+How it was built: `handoff/scripts/merge2.py` (full1c's games for `full1c/vids.txt`, else
+full1's, ok parts only; undo/detour `doubtful_plies` from the replay logs `replay_log2*.json`,
+since the rebuild ran before that rule was on; then `drop_final_bunch` and `add_trust`).
+`catalog.DROP_FINAL_BUNCH` and `reconstruct.RETRACT_ENDS_TRUST` (undo/detour, not browsing) are
+now on by default, so new scans produce the same.
 
-**Merge rule:** for each video in `full1c/vids.txt` take `full1c`'s games, else `full1`'s.
-Only use a video's part if its run.log line says `ok`. Apply `catalog.drop_final_bunch` then
-`catalog.add_trust` to every merged entry, and set `catalog.DROP_FINAL_BUNCH` on by default
-(it was kept off so the rebuild stayed one version). Then benchmark (0 wrong trusted moves is the
-bar), compare against `merge1/cand.json` + `merge1/bm.txt` (by video + start_seconds), report
-gains *and* losses, and for the 14 template re-read videos keep the new games only if they score
-better. Then merge into `web/data/games.json` and commit.
+## Left over from the merge
 
-Expect trust to show fewer games than `merge1` (the back-off below: −4.5% shown, −12.6% openings in
-replay) and clocks to be much better (lichess especially).
+- **7 template re-read videos scored worse** on every move right with their new readings:
+  ptZI7tREx_Y 4 → 2, 9vQg9P0gUmU 4 → 2, uXOKa40Ie6k 5 → 3, iAkCsXSxBmg 5 → 3,
+  8C69k-ce4-c 5 → 2, b97fezBKqpc 7 → 3, F6fw2jek4Xk 3 → 1. The new readings went in anyway:
+  the old games predate the marks the trust rules need. Next: rebuild these 7 from their old
+  readings (`handoff/old_readings2/`, `old_readings3/`) with current code and keep whichever
+  version scores better.
+- `OFbL_VUP8Nw` produces no games (none before either).
+- `web/data/games.json` is 9 MB pretty-printed (1.4 MB gzipped, which Pages serves). Writing it
+  compact, or leaving out fields the site doesn't use, would halve it.
+- Matches to real games aren't saved yet: write `scanner/cache/<video_id>-truth.json`
+  (video, start, first moves, real game URL) from `benchmark.py --json` (Cat wants these kept).
 
 ## Done this session (all committed)
 

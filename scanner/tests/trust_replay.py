@@ -63,7 +63,7 @@ RULES = {
 }
 
 
-def _build_one(vid: str) -> list[dict]:
+def _build_one(vid: str, keep_unmatched: bool = False) -> list[dict]:
     try:
         info = json.loads((CACHE / f"{vid}.info.json").read_text())
         readings = json.loads((CACHE / f"{vid}-readings.json").read_text())["readings"]
@@ -80,7 +80,7 @@ def _build_one(vid: str) -> list[dict]:
     for g in games:
         entry = {"moves_san": g.moves_san, "move_seconds": g.move_seconds, "ambiguous_plies": list(g.ambiguous)}
         real, _ = benchmark.match(entry, cands)
-        if real is None:
+        if real is None and not keep_unmatched:
             continue
         # bunches: the plies accepted by one "ply N:" note, with the notes since the previous one
         bunches, seen = [], set()
@@ -99,15 +99,15 @@ def _build_one(vid: str) -> list[dict]:
         out.append({"video_id": vid, "start_seconds": g.move_seconds[0],
                     "moves_san": g.moves_san, "move_seconds": g.move_seconds,
                     "ambiguous_plies": list(g.ambiguous), "fuzzy_plies": list(g.fuzzy),
-                    "correct": benchmark._prefix(g.moves_san, real["moves_san"], g.ambiguous),
-                    "real_ply": len(real["moves_san"]), "bunches": bunches})
+                    "correct": benchmark._prefix(g.moves_san, real["moves_san"], g.ambiguous) if real else None,
+                    "real_ply": len(real["moves_san"]) if real else None, "bunches": bunches})
     return out
 
 
-def build(log: Path, vids: list[str], jobs: int) -> None:
+def build(log: Path, vids: list[str], jobs: int, keep_unmatched: bool = False) -> None:
     games = []
     with ProcessPoolExecutor(max_workers=jobs) as pool:
-        for i, (vid, out) in enumerate(zip(vids, pool.map(_build_one, vids)), 1):
+        for i, (vid, out) in enumerate(zip(vids, pool.map(_build_one, vids, [keep_unmatched] * len(vids))), 1):
             games += out
             print(f"[{i}/{len(vids)}] {vid}: {len(out)} matched games", flush=True)
     log.write_text(json.dumps(games))
@@ -190,6 +190,9 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("log", type=Path)
     b.add_argument("vids", nargs="+")
     b.add_argument("--jobs", type=int, default=10)
+    b.add_argument("--keep-unmatched", action="store_true",
+                   help="also keep games with no real game (correct = None): their bunch contexts give a merge its "
+                        "doubtful plies; replay can't score them, so don't replay such a log")
     r = sub.add_parser("replay")
     r.add_argument("log", type=Path)
     r.add_argument("rules", nargs="*", help=f"rule names joined by '+': {', '.join(RULES)}")
@@ -197,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--marks", type=Path, help="take move times and ambiguous/fuzzy plies from this catalog")
     args = ap.parse_args(argv)
     if args.cmd == "build":
-        build(args.log, args.vids, args.jobs)
+        build(args.log, args.vids, args.jobs, args.keep_unmatched)
     else:
         replay(args.log, args.rules, args.clocks, args.marks)
     return 0
