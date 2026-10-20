@@ -4,3 +4,4 @@ numpy
 python-chess
 pytest
 pytesseract
+tesserocr

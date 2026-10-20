@@ -956,7 +956,24 @@ def _parse_clock_text(raw: str) -> float | None:
     return None
 
 
+# Tesseract in-process (tesserocr) when installed: pytesseract starts a new
+# tesseract process per call, which reloads the model - ~100 ms a call against
+# ~25 ms, and a long video makes tens of thousands of calls.
+_INPROC = os.environ.get("TESSERACT_INPROC", "1") == "1"
+_api = None
+
+
 def _tesseract_line(img: np.ndarray) -> str:
+    global _api, _INPROC
+    if _INPROC and img.ndim == 2 and img.dtype == np.uint8:
+        try:
+            if _api is None:
+                import tesserocr
+                _api = tesserocr.PyTessBaseAPI(psm=tesserocr.PSM.SINGLE_LINE)
+            _api.SetImageBytes(np.ascontiguousarray(img).tobytes(), img.shape[1], img.shape[0], 1, img.shape[1])
+            return "".join(_api.GetUTF8Text().split())
+        except ImportError:
+            _INPROC = False
     data = pytesseract.image_to_data(img, config="--psm 7", output_type=pytesseract.Output.DICT)
     return "".join(tok for tok in data["text"] if tok.strip())
 
