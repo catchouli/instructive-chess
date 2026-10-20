@@ -38,6 +38,8 @@ is benchmarked against the real game, and the site only shows the moves the scan
 vouch for; the bar is that none of them is wrong on the benchmark. Next comes lining the
 commentary up with the moves, then the instructor itself.
 
+The design notes for it are in [`ASSISTANT.md`](ASSISTANT.md).
+
 ---
 
 ## Web app
