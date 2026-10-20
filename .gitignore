@@ -5,3 +5,4 @@ scanner/cache/
 .DS_Store
 .pytest_cache/
 scanner/.lichess_token
+assistant/cache/

@@ -119,3 +119,28 @@ gaps while scanner batches run, without slowing the scanner down.
 4. **If it's promising,** automate step 3 with language-model calls, citing the videos and
    timestamps each idea came from.
 5. **Then** add structure grouping, engine scoring and weighting.
+
+## Findings
+
+### 2026-10-20: first look (`assistant/positions.py`, `assistant/commentary.py`)
+
+On the rebuilt catalog (1,718 games, 193 videos, trusted moves only):
+
+- **Coverage is good where the narrators' repertoires are.** The London with ...c5 and
+  ...Nc6 is reached in 31 videos (45 games). The Slav, the QGD Exchange, the Stafford and
+  several London lines turn up in 10-20 videos each. Transpositions meet as intended. Nearly
+  all of the top positions are Eric Rosen's.
+- **Commentary on opening positions is mostly chatter.** Of 45 visits to that London position,
+  about 5 say anything about the opening ("my anti-London line", "everyone's avoiding it with
+  knight f3 on move two"). The rest is "London time", standings and chat. Reading from each
+  game's first move (`--from-start`) for the QGD Exchange gave the same: a few nuggets ("my
+  usual QGD bread and butter", "h6 walks into tactics") among stream talk.
+- **Why:** in streams the narrator plays the opening from memory and talks to chat. The
+  explanations likely come once the game leaves their preparation and they have to think,
+  and in recorded videos made to explain. So: look at what's said in the middlegames that
+  follow an opening, not at the opening positions themselves, and compare streams with
+  recorded videos.
+
+Next: measure where in a game the instructive commentary is (by ply and by video type),
+using a cheap model to sort segments into instructive and chatter (a z.ai GLM-5.3-flash key
+is available, kept in an environment variable, never in the repo).
