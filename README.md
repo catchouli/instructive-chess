@@ -11,6 +11,12 @@
 A catalog of **instructive chess games** — games played on YouTube by masters who narrate
 every move — that you can search by the moves played.
 
+It is also an R&D project in turning those videos into data an AI can learn from. Computer
+vision reads each game off the screen move by move, with both clocks and both ratings; a
+benchmark scores every game against the real one played online; and each video's narration
+is kept with its timings, so what the master said can be lined up with the move they were
+playing.
+
 Two parts:
 
 | Part | What it is |
@@ -19,6 +25,18 @@ Two parts:
 | `web/` | A dependency-free static site. Loads `games.json`, lets you type PGN, and lists games whose opening matches. |
 
 All games are assumed to start from the standard starting position.
+
+### Where it's going
+
+The database page stays: finding real games in the line you play is useful on its own. The
+next step is an **AI opening and position instructor** built on the same data. Ask it about a
+position and it answers from games that reached it, in the words of the masters who played
+them, explaining why they chose a move, what they were worried about and how the game went.
+
+That depends on the data being right, so the work so far has gone into accuracy. Every game
+is benchmarked against the real game, and the site only shows the moves the scanner can
+vouch for; the bar is that none of them is wrong on the benchmark. Next comes lining the
+commentary up with the moves, then the instructor itself.
 
 ---
 
