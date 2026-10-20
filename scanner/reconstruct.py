@@ -36,7 +36,8 @@ UNDO_WINDOW_S = 6.0    # a ply reverted within this long of appearing is taken b
 BUNCH_UNDO = True      # ...and so is a whole bunch accepted from one reading
 FUZZY_CONFIRM_S = 2.0  # a fuzzy bunch's position read exactly this long confirms it (0 = never)
 UNREACH_BUNCH = 0.0  # a bunch accepted right after an unexplainable reading a square off ends trust (0 = off)
-RETRACT_ENDS_TRUST = 0.0  # moves accepted right after an undo/browse/detour end trust (0 = off)
+RETRACT_ENDS_TRUST = 1.0  # moves accepted right after an undo or detour end trust (0 = off)
+RETRACT_BROWSE = False    # ...and after browsing back (3 -> 1 leaks either way for 2.5x the cost)
 HIDDEN_KING = 1.0  # a missing king: try castling, and moves by its side are guesses (0 = off)
 PREMOVE_MAX_DIFF = 6   # a premove drawn on a move changes at most this many squares
 LOOKAHEAD_MAX_DIFF = 8      # _explains_next: the next reading must be within a move or two
@@ -884,7 +885,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
             if earlier[-1] == n - 1:
                 undone_from = n - 1
             note(ts, f"browsing back to ply {earlier[-1]}")
-            after_retract = True
+            after_retract = after_retract or RETRACT_BROWSE
             continue
 
         premove = _premove_display(board, target)

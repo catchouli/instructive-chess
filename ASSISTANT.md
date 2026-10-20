@@ -141,6 +141,11 @@ On the rebuilt catalog (1,718 games, 193 videos, trusted moves only):
   follow an opening, not at the opening positions themselves, and compare streams with
   recorded videos.
 
+First targets: **the London** (296 games in 77 videos, nearly all Eric Rosen as White) and **the
+Sicilian** (161 games in 99 videos: Eric Rosen on both sides, GingerGM, John Bartholomew and
+Naroditsky as Black). Cat plays both, so can judge whether a summary is any good. The Sicilian
+has more narrators, so it's the better test of distilling across people.
+
 Next: measure where in a game the instructive commentary is (by ply and by video type),
 using a cheap model to sort segments into instructive and chatter (a z.ai GLM-5.3-flash key
 is available, kept in an environment variable, never in the repo).
