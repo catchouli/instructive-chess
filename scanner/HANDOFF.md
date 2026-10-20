@@ -18,7 +18,9 @@ trust), so the merge is one consistent catalog. Three runs, all `tests/rescan.py
   switched on at 05:17 (`full1c/vids.txt`: `full1/before_tallest.txt` + the 5 re-reads), 4 jobs.
 
 **Merge rule:** for each video in `full1c/vids.txt` take `full1c`'s games, else `full1`'s.
-Only use a video's part if its run.log line says `ok`. Then benchmark (0 wrong trusted moves is the
+Only use a video's part if its run.log line says `ok`. Apply `catalog.drop_final_bunch` then
+`catalog.add_trust` to every merged entry, and set `catalog.DROP_FINAL_BUNCH` on by default
+(it was kept off so the rebuild stayed one version). Then benchmark (0 wrong trusted moves is the
 bar), compare against `merge1/cand.json` + `merge1/bm.txt` (by video + start_seconds), report
 gains *and* losses, and for the 14 template re-read videos keep the new games only if they score
 better. Then merge into `web/data/games.json` and commit.
