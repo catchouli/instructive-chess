@@ -6,3 +6,6 @@ scanner/cache/
 .pytest_cache/
 scanner/.lichess_token
 assistant/cache/
+
+# private session notes (handoffs between sessions); research notes stay public
+private/

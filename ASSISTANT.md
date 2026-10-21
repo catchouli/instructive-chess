@@ -198,17 +198,35 @@ is available, kept in an environment variable, never in the repo).
   of it thinking), about $0.003 at the list price ($0.15/M in, $0.50/M out, secondhand; check
   z.ai's own page). The labels look right: the Dutch d3 line, Black's plan of developing the
   bishop, castling and ...Qg6, and the ...d4 pawn sac with its reason.
-- **Validation set:** 80 random units (seed 20261021) in `assistant/cache/sample80.jsonl`,
-  labelled by hand **before** any model saw them, in `sample80_cat_claude.json`: 20 instructive
-  (25%), 48 move-calling (60%), 12 chatter (15%). The instructive share is lower than the
-  earlier 44% by visit, because units are smaller.
+- **Validation set:** the first one (80 units labelled by hand) was lost. See below.
+
+### 2026-10-21: Claude Haiku 5.5 instead of GLM
+
+GLM was dropped (always thinks, rate-limited at 6 requests, slow). Claude models now run through
+the Anthropic API (`ANTHROPIC_API_KEY`, prepaid credits);
+`classify.py` defaults to `claude-haiku-5-5` at effort low with a JSON schema for the labels.
+
+- **New validation set** (`assistant/validate.py`): 80 random units (seed 20261021) in
+  `assistant/cache/sample.jsonl`, labelled by hand (drafted by Claude) in `sample_hand.json`
+  before any model saw them: 22 instructive, 48 move-calling, 10 chatter. `validate.py label`
+  sends each unit in the same 12-unit batch `classify.py` would; `score` compares.
+- **Results** (instructive or not is what matters: move and chatter are both discarded):
+
+  | Run | 3-way | Instructive or not | Precision | Recall | All units |
+  | --- | --- | --- | --- | --- | --- |
+  | Haiku 5.5, first prompt | 64% | 76% | 16/29 | 16/22 | ~$2.40 |
+  | Haiku 5.5, tighter prompt | 69% | **85%** | 15/20 | 15/22 | ~$2.40 |
+  | Sonnet 5.5, tighter prompt | 74% | 88% | 17/22 | 17/22 | ~$45 |
+
+  The tighter prompt (instructive only if the unit itself states a reason, idea or plan, with
+  near-miss examples written fresh, not taken from the sample) fixed Haiku's main error,
+  calling bare evaluations instructive. Most of what's left is move vs chatter, partly the
+  hand labels' own inconsistency ("you idiot" labelled move; the prompt now says chatter).
+  Caveat: the hand labels and both models are Claude, so Cat spot-checking some disagreements
+  would make these numbers more trustworthy.
 
 Next:
-1. Rerun `classify.py 5M0c_EwRQiI` (Naroditsky, many games) to measure the time and cost of a
-   full video, and tune `ASSISTANT_WORKERS`.
-2. Label the 64 videos in the sample, then score GLM against `sample80_cat_claude.json`.
-   Trust it on the rest if it agrees about 80% of the time or more, and list where it disagrees.
-3. If it holds up, label all 193 videos and measure the instructive share by ply, narrator,
-   and stream versus recorded video.
-4. Group the `idea`s by opening and pawn structure, and draft London and Sicilian summaries
-   with citations for Cat to judge.
+1. Label all 193 videos with Haiku and the tighter prompt (~$2.40; the Batch API would halve
+   it), and measure the instructive share by ply, narrator, and stream versus recorded video.
+2. Group the `idea`s by opening and pawn structure, and draft London and Sicilian summaries
+   with citations for Cat to judge (Sonnet 5.5 reading the instructive units again).

@@ -77,7 +77,7 @@ in-process Tesseract and the hi-res frame cache mid-run; both give identical out
 
 ## Current state (2026-10-15)
 
-Live catalog: **354 games from 76 videos**, 241 listed (12+ trusted plies), 337 matched: **0 wrong trusted of 8,831 plies**, whole opening trusted in 45%. Added: the 18 library videos re-read after the re-fit gate, and 18 of the 141-video tournament batch (the rest are read but not yet reconstructed, see HANDOFF.md). One new game (Aig9-ZyQ8Ak game 4) had 4 wrong trusted plies (14-17) and was left out; not yet traced.
+Live catalog: **354 games from 76 videos**, 241 listed (12+ trusted plies), 337 matched: **0 wrong trusted of 8,831 plies**, whole opening trusted in 45%. Added: the 18 library videos re-read after the re-fit gate, and 18 of the 141-video tournament batch (the rest were read but not yet reconstructed). One new game (Aig9-ZyQ8Ak game 4) had 4 wrong trusted plies (14-17) and was left out; not yet traced.
 
 ## Earlier state (2026-10-14)
 
@@ -201,6 +201,26 @@ and recalibrate as the library grows (it needed it once already).
 | Clock OCR in-process (tesserocr) instead of pytesseract's process per call (`clock_read._tesseract_line`, `TESSERACT_INPROC`) | ~25 ms vs ~104 ms a call under load; clock tests 4:03 → 2:04, all 53 pass both ways; 397/400 random crops from 5 channels give identical text (3 differ only in spaces inside junk), parsed clock values 0/400 differ | Yes |
 | Cache the hi-res rating frames losslessly (`download.fetch_hires_frame`, `scanner/cache/hires/`) | 10.3 s fetch → 0.03 s from disk, identical pixels. A rescan or ratings rescore no longer needs the network | Yes |
 | Clock OCR last fallback: read only the tallest text line of the box (`clock_read._tallest_line`, `CLOCK_TALLEST_LINE`). A motion-found lichess box can take in the shrinking time bar and the name row (Jqz9fdHOrPQ: 152x81 around a 37-px clock) | Jqz9: the 8 games whose clocks regressed with the current box choice all fixed (e.g. -17 31/42 → 42/42, -32 110/122 → 122/122), 4 improved further (-75 79/97 → 105/106); clocks OK 8 → 12 of 12. chess.com guard (24 games, 4 channels): 20 → 23, no regressions | Yes |
+
+### 2026-10-21: where "every move right" fails (449 of 1,653 matched games on the live catalog)
+
+First error of each failing game, against the real game (scratch script: first error, what kind, whether the record lines up again):
+
+| Kind | Games |
+|---|---|
+| Diverges and never lines up again, **within 6 plies of the record's end** (the real game goes on 10+ plies in 151 of these: a wrong ply derails reconstruction and the game closes after 10 misses) | 178 |
+| Diverges, mid-game | 141 |
+| Plies missing, then lines up again (44 of them: exactly 4 real plies missing, a repetition such as Ng4+ Kh7 Nf6+ Kh6) | 62 |
+| Same moves in a different order (transpositions inside 1 fps bunches) | 37 |
+| Extra plies, then lines up again | 30 |
+
+Marks at the first wrong ply: none 166, rough 119, fuzzy 69, fuzzy+rough 55, doubtful 16, ambiguous 10 (some overlap).
+
+| Idea | Result | Kept? |
+|---|---|---|
+| `_placement_of` from the bitboards instead of parsing `board_fen()` (it was ~65% of reconstruction's time) | Identical on 35,594 random positions, 3.5× faster a call; a 700-s stretch of 5Fw9tq1aUUE reconstructs in 3.7 s instead of 6.8 s | Yes |
+| **Recover from a derail** (`reconstruct.RECOVER`, `_recover`): when a reading 3+ squares off can't be explained (misses ≤ 3), and the next reading doesn't follow from here either, re-explain it from up to 6 plies back: first one recent piece's two moves merged into one (traced: 21.Qe2 Rfc8 22.Qc2 for 21.Qc2 Rfc8, a tempo out, and the game closed 63 plies early), then the fewest plies taken back with a route starting differently. Exact landing required, the next reading must follow (a square off allowed); the replaced plies are doubtful (end trust) | First version, recovery at misses 3-9: never fired (the readings are 7+ plies on by then; a 500k-node search fails). At misses ≤ 3, on hard+guard (39 videos, 600 matched): every move right 414 → 417, right plies +332, but correct games broken by a frame caught mid-move (6RTjPSXYrPE 126/126 → 64). + next reading must *not* follow from here: 418, right plies +414, but 4 correct games made wrong: recoveries right after browsing/undo (a line being shown) or on an "ambiguous" reading (post-game analysis). + no recovery within 30 s of an undo/browse/detour (`RECOVER_QUIET_S`), nor on ambiguous readings: **421** right games (+7), right plies +332, 0 wrong trusted both arms, trusted plies −12, shown −1, matched −1; no correct game made wrong (PEpvyA_2kG4 65/65 → 61/61). Allowing ambiguous readings (RECOVER=2): 420 | Testing on the whole library |
+| Hidden 4-ply repetitions: the flicker vote smooths away a repetition played a second a move, so the record loses 4 plies. Raw frames show the cycle in 31 of the 44 games, its first position (which browsing the move list never shows) in 23. Detector: quiet move, reply, both reversed, accepted when raw frames since the last move show the first cycle position and one more, each a square off at most, and only one cycle fits | On the 44: 8 right, 3 wrong, 33 not found. On gaps of 150 all-right games: fired in 5 (false). At 1 fps the frames are too few and too noisy; a dense re-read of such moments might work | **No** |
 
 ## Clocks
 
