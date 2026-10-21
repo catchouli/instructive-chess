@@ -10,6 +10,7 @@ sequence of legal moves.
 """
 from __future__ import annotations
 
+import bisect
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -121,6 +122,10 @@ class Game:
     # first plies of bunches accepted right after an unexplainable reading a
     # square off: where trust ends just after one, trust.py backs off to it
     rough: list[int] = field(default_factory=list)
+    # per ply: was the position after it read exactly again before the next
+    # ply (or within SETTLE_TAIL_S of the last)? A game's final plies that
+    # never were are where reconstruction derailed (see catalog.drop_unsettled_tail)
+    settled: list[bool] = field(default_factory=list)
 
     @property
     def ply(self) -> int:
@@ -703,6 +708,26 @@ def _distinct_states(readings: list[tuple[float, str | None]]):
     return out
 
 
+SETTLE_TAIL_S = 60.0   # how long after a game's last ply its position may still be read
+
+
+def _settled(game: "Game", readings: list[tuple[float, str | None]]) -> list[bool]:
+    """Game.settled, from the (voted) readings."""
+    times = [ts for ts, _ in readings]
+    board = chess.Board()
+    out = []
+    for i, san in enumerate(game.moves_san):
+        board.push_san(san)
+        here = _placement_of(board)
+        if game.flipped:
+            here = here[::-1]
+        t0 = game.move_seconds[i]
+        t1 = game.move_seconds[i + 1] if i + 1 < len(game.move_seconds) else t0 + SETTLE_TAIL_S
+        lo, hi = bisect.bisect_right(times, t0), bisect.bisect_right(times, t1)
+        out.append(any(readings[j][1] == here for j in range(lo, hi)))
+    return out
+
+
 def _clock_at_or_before(pairs: list[tuple[float, float]], t: float) -> float | None:
     """The clock value from the last entry in `pairs` (sorted by timestamp)
     at or before `t`, or None if `pairs` has no entry that early."""
@@ -1240,4 +1265,6 @@ def reconstruct(readings: list[tuple[float, str | None]],
             close("max plies")
 
     close("end of readings")
+    for g in games:
+        g.settled = _settled(g, readings)
     return games

@@ -48,6 +48,23 @@ def _clock_seconds(values: list[float | None]) -> list[int | None]:
 # drop_final_bunch applied afterwards; off while it runs so it stays one version.
 DROP_FINAL_BUNCH = os.environ.get("CATALOG_DROP_FINAL_BUNCH", "1") == "1"
 _PLY_MARKS = ("ambiguous_plies", "fuzzy_plies", "doubtful_plies", "rough_plies")
+DROP_UNSETTLED = int(os.environ.get("CATALOG_DROP_UNSETTLED", "10"))   # 0 = off
+
+
+def _truncate(entry: dict, start: int) -> None:
+    """Keep only the first *start* plies of an entry, with its marks."""
+    for key in ("moves_san", "move_seconds", "clock_white_seconds", "clock_black_seconds", "move_confidence"):
+        if key in entry:
+            entry[key] = entry[key][:start]
+    for key in _PLY_MARKS:
+        if key in entry:
+            kept = [i for i in entry[key] if i < start]
+            if kept:
+                entry[key] = kept
+            else:
+                del entry[key]
+    entry["ply"] = start
+    entry["pgn"] = " ".join(f"{i // 2 + 1}. {san}" if i % 2 == 0 else san for i, san in enumerate(entry["moves_san"]))
 
 
 def drop_final_bunch(entry: dict) -> int:
@@ -66,18 +83,23 @@ def drop_final_bunch(entry: dict) -> int:
         start -= 1
     if n - start < 2 or start < 10:
         return 0
-    for key in ("moves_san", "move_seconds", "clock_white_seconds", "clock_black_seconds", "move_confidence"):
-        if key in entry:
-            entry[key] = entry[key][:start]
-    for key in _PLY_MARKS:
-        if key in entry:
-            kept = [i for i in entry[key] if i < start]
-            if kept:
-                entry[key] = kept
-            else:
-                del entry[key]
-    entry["ply"] = start
-    entry["pgn"] = " ".join(f"{i // 2 + 1}. {san}" if i % 2 == 0 else san for i, san in enumerate(entry["moves_san"]))
+    _truncate(entry, start)
+    return n - start
+
+
+def drop_unsettled_tail(entry: dict, settled: list[bool]) -> int:
+    """Drop up to DROP_UNSETTLED of a game's final plies whose positions were
+    never read again before the next ply (reconstruct.Game.settled): where a
+    game ends with them, reconstruction had usually derailed - a wrong ply
+    accepted, nothing after it explained. Measured on the 1,656 matched games
+    of the whole library (reconstruct only): every move right 61.0% -> 78.7%,
+    for 1.1% of right plies (all of them untrusted). Keeps at least 10 plies.
+    Returns how many were dropped; call add_trust afterwards."""
+    n = start = len(entry["moves_san"])
+    while start > 10 and n - start < DROP_UNSETTLED and start <= len(settled) and not settled[start - 1]:
+        start -= 1
+    if start < n:
+        _truncate(entry, start)
     return n - start
 
 
@@ -180,6 +202,8 @@ def _entry(source: Source, game: Game, index: int, speedrun: bool | None = None)
         entry["rating_black"] = game.rating_black
     if DROP_FINAL_BUNCH:
         drop_final_bunch(entry)
+    if DROP_UNSETTLED:
+        drop_unsettled_tail(entry, game.settled)
     add_trust(entry)   # last: it looks at the clock fields
     tag(entry, speedrun)
     return entry
