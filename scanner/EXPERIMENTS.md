@@ -75,6 +75,14 @@ job total at or below the cores (16): ffmpeg takes ~5 cores a decode by default.
 Exception to "don't edit while it runs": the 2026-10-20 full rebuild (`handoff/full1`) took
 in-process Tesseract and the hi-res frame cache mid-run; both give identical output (checked).
 
+## Current state (2026-10-21)
+
+Live catalog rebuilt from cached readings with derail recovery and the unsettled-tail drop:
+**1,776 games from 193 videos, 1,180 listed**, 1,650 matched. Every move right **83.2%** (was
+72.8%; lichess 86.1%, chess.com 81.8%), clocks 83.0%, ratings 77.0% (lichess 55.0%), **0 wrong
+trusted moves of 44,394**, plies before the first error 95.5%. Costs against the 2026-10-20
+catalog: trusted plies 44,588 -> 44,394, listed 1,187 -> 1,180, whole openings 736 -> 735.
+
 ## Current state (2026-10-15)
 
 Live catalog: **354 games from 76 videos**, 241 listed (12+ trusted plies), 337 matched: **0 wrong trusted of 8,831 plies**, whole opening trusted in 45%. Added: the 18 library videos re-read after the re-fit gate, and 18 of the 141-video tournament batch (the rest were read but not yet reconstructed). One new game (Aig9-ZyQ8Ak game 4) had 4 wrong trusted plies (14-17) and was left out; not yet traced.
