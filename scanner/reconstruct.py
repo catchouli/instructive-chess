@@ -39,11 +39,12 @@ UNREACH_BUNCH = 0.0  # a bunch accepted right after an unexplainable reading a s
 RETRACT_ENDS_TRUST = 1.0  # moves accepted right after an undo or detour end trust (0 = off)
 RETRACT_BROWSE = False    # ...and after browsing back (3 -> 1 leaks either way for 2.5x the cost)
 HIDDEN_KING = 1.0  # a missing king: try castling, and moves by its side are guesses (0 = off)
-RECOVER = 0.0          # readings stopped following: re-explain them from a few plies back (0 = off,
+RECOVER = 1.0          # readings stopped following: re-explain them from a few plies back (0 = off,
                        # 1 = not for a reading with several routes from here, 2 = for those too)
 RECOVER_PLIES = 6      # ...from at most this many plies back
 RECOVER_MIN_DIFF = 3   # ...for a reading at least this many squares from the current position
 RECOVER_QUIET_S = 30.0  # ...and not this soon after the board went back (a line being shown, not played)
+RECOVER_STRICT = 0.0   # ...and never to a shorter line, nor from a reading with a king missing (0 = off)
 PREMOVE_MAX_DIFF = 6   # a premove drawn on a move changes at most this many squares
 LOOKAHEAD_MAX_DIFF = 8      # _explains_next: the next reading must be within a move or two
 LOOKAHEAD_DEPTH = 4         # ...searched this deep at most
@@ -1132,7 +1133,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 after_unreach1 = True
             if RECOVER and misses <= 3 and _hamming(cur_placement, target) >= RECOVER_MIN_DIFF \
                     and (RECOVER >= 2 or info not in ("ambiguous", "fuzzy-ambiguous")) \
-                    and ts - last_retract > RECOVER_QUIET_S:
+                    and ts - last_retract > RECOVER_QUIET_S and not (RECOVER_STRICT and repaired is not None):
                 # Derailed: a wrong ply was accepted a little while ago (traced:
                 # "21.Qe2" for a queen dragged on its way to c2, then 22.Qc2
                 # too, a tempo out, and nothing after it could be explained, so
@@ -1140,6 +1141,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 # exactly from a few plies back by another route, and the next
                 # reading follows from there, take that route instead.
                 fix = _recover(current.moves_san, history, target, next_state(ei), current.flipped)
+                if fix is not None and RECOVER_STRICT and len(fix[1]) < current.ply - fix[0]:
+                    # a derail leaves the game behind, so the true line is at
+                    # least as long as the plies it replaces (traced: five right
+                    # plies replaced by two on a frame read 3 squares off)
+                    fix = None
                 if fix is not None:
                     k, seq, start = fix
                     note(ts, f"recover: plies {k + 1}-{current.ply} ({' '.join(current.moves_san[k:])}) "
