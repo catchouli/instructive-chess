@@ -61,7 +61,11 @@ A reason that the captions cut off before it is said ("I'm giving back a pawn bu
 For "instructive" units only, also give:
 - "evidence": the exact words from this unit's "said" that carry the reason, idea or plan, copied verbatim (garbled spelling included), as short as will do.
 - "topics": a list from plan, reason, tactic, evaluation, structure, opening, endgame
-- "idea": what the evidence says, in one short sentence of clean chess English with correct SAN notation, standing on its own (e.g. "White plays h4 to gain space before Black castles."). Only what the narrator said: decode the notation, but do not add reasons, plans or evaluations of your own, even correct ones. The "moves" are there to decode notation, never as a source of ideas. If the words are too vague for a clear idea, the unit is not instructive.
+- "idea": what the evidence says, as ONE short sentence of clean chess English with correct SAN notation, standing on its own (e.g. "White plays h4 to gain space before Black castles."). Nothing else in it: no notes, brackets, topics or hedges.
+  Only what the narrator said. Decode the notation, but add no reasons, plans, consequences or evaluations of your own, even correct ones ("so White shouldn't rush", "which defends the king" are not allowed unless said). The "moves" are only for decoding notation.
+  When the narrator points at squares without naming them ("go here", "this square", "bishop here"), they are drawing on the board: keep the idea as unspecific as the words, and never fill the squares in from the moves.
+
+The unit is NOT instructive if: the words are too vague for a clear idea; it is a fragment whose point is cut off ("or he's going to lose a bunch of his"); it only names a piece or square ("the bishop on f1 I guess"); it is about preparation or memory ("this is all prep") rather than the position; or it repeats a word ("threatening threatening").
 
 Reply with JSON only: {"labels": [{"id": "...", "kind": "...", "evidence": "...", "topics": [...], "idea": "..."}, ...]} with one entry per unit, in order."""
 
@@ -177,6 +181,11 @@ def checked(label: dict, said: str, before: str = "", after: str = "") -> dict:
     into the units either side (captions cut sentences across positions), but
     must touch this one."""
     out = {k: label[k] for k in ("kind", "evidence", "topics", "idea") if k in label}
+    if out.get("idea"):
+        # the model sometimes runs on past the sentence (traced: "...cause.',", "...tempo.Q")
+        idea = out["idea"].strip()
+        end = max(idea.rfind(c) for c in ".!?")
+        out["idea"] = idea[:end + 1] if end > 0 else idea.rstrip("'\",\\ ")
     if out.get("kind") == "instructive":
         quote = _norm(out.get("evidence", "")).split()
         b, m, a = _norm(before).split(), _norm(said).split(), _norm(after).split()

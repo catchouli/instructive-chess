@@ -225,8 +225,34 @@ the Anthropic API (`ANTHROPIC_API_KEY`, prepaid credits);
   Caveat: the hand labels and both models are Claude, so Cat spot-checking some disagreements
   would make these numbers more trustworthy.
 
+### 2026-10-21 (night): ideas must be the narrator's own
+
+The first full run (all 193 videos, ~$2.40) labelled 57,004 units: about 30% instructive. Cat's
+first look at the review page (`assistant/review.py`, local) found an idea that was right but
+not said: over waffle ("so what am I doing… if I move my rook up so I can swing it"), Haiku wrote
+a clean plan of a queen-and-rook attack, read off the moves. Every idea will be cited to a
+creator's video, so it must be theirs.
+
+- **Evidence:** instructive labels now quote the words they rest on; the quote is checked
+  against the transcript (it may run into the neighbouring unit, since captions cut sentences
+  across positions, and may skip a repeated phrase).
+- **Dev set** (`assistant/iterate.py`): 60 units, 15 per channel, 20 per phase, never from the
+  validation set; each prompt version is labelled (~5 cents) and reviewed on a page with a
+  second verdict per idea: faithful, or beyond what was said.
+- **v2** (evidence, "only what the narrator said"): of 16 instructive, about 8 reasonable, 5
+  added things nobody said ("helps defend the king", "c4 and doubling on the d-file"), several
+  fragments, and junk in ideas ("(hedged)").
+- **v3** (one sentence, no added reasons or consequences, squares pointed at but not named stay
+  unnamed, fragments and memory talk not instructive): 14 instructive, fewer inventions; the
+  "here/this square" ideas stay vague. A few still add detail ("if the attack continues").
+  Trailing junk after the sentence is now cut in code.
+- Deictic speech ("go here, do this") is common in streams; the narrator is drawing arrows.
+  Reading those (`scanner/arrows.py`, see EXPERIMENTS.md) would make such units concrete.
+- Reliability fixes: a reply looping on "]}]}" until max_tokens is retried, and units a
+  reply leaves out are asked for again.
+
 Next:
-1. Label all 193 videos with Haiku and the tighter prompt (~$2.40; the Batch API would halve
+1. Cat reviews v3 (`assistant/cache/review_v3.html`); iterate; then relabel everything (~$2.40; the Batch API would halve
    it), and measure the instructive share by ply, narrator, and stream versus recorded video.
 2. Group the `idea`s by opening and pawn structure, and draft London and Sicilian summaries
    with citations for Cat to judge (Sonnet 5.5 reading the instructive units again).
