@@ -39,6 +39,11 @@ UNREACH_BUNCH = 0.0  # a bunch accepted right after an unexplainable reading a s
 RETRACT_ENDS_TRUST = 1.0  # moves accepted right after an undo or detour end trust (0 = off)
 RETRACT_BROWSE = False    # ...and after browsing back (3 -> 1 leaks either way for 2.5x the cost)
 HIDDEN_KING = 1.0  # a missing king: try castling, and moves by its side are guesses (0 = off)
+RECOVER = 0.0          # readings stopped following: re-explain them from a few plies back (0 = off,
+                       # 1 = not for a reading with several routes from here, 2 = for those too)
+RECOVER_PLIES = 6      # ...from at most this many plies back
+RECOVER_MIN_DIFF = 3   # ...for a reading at least this many squares from the current position
+RECOVER_QUIET_S = 30.0  # ...and not this soon after the board went back (a line being shown, not played)
 PREMOVE_MAX_DIFF = 6   # a premove drawn on a move changes at most this many squares
 LOOKAHEAD_MAX_DIFF = 8      # _explains_next: the next reading must be within a move or two
 LOOKAHEAD_DEPTH = 4         # ...searched this deep at most
@@ -135,12 +140,14 @@ class Game:
 
 
 def _placement_of(board: chess.Board) -> str:
-    rows = board.board_fen().split("/")
-    expanded = []
-    for row in rows:
-        for ch in row:
-            expanded.append("." * int(ch) if ch.isdigit() else ch)
-    return "".join(expanded)
+    # straight from the bitboards: board_fen() was most of reconstruction's time
+    out = ["."] * 64
+    white = board.occupied_co[chess.WHITE]
+    for bb, sym in ((board.pawns, "p"), (board.knights, "n"), (board.bishops, "b"),
+                    (board.rooks, "r"), (board.queens, "q"), (board.kings, "k")):
+        for sq in chess.scan_forward(bb):
+            out[sq ^ 56] = sym.upper() if white >> sq & 1 else sym
+    return "".join(out)
 
 
 def _hamming(a: str, b: str) -> int:
@@ -563,6 +570,79 @@ def _explains_next(board: chess.Board, moves: list[chess.Move], following: str) 
     return False
 
 
+def _board_after(moves_san: list[str]) -> chess.Board:
+    b = chess.Board()
+    for san in moves_san:
+        b.push_san(san)
+    return b
+
+
+def _recover(moves_san: list[str], history: list[str], target: str, following: str | None,
+             flipped: bool) -> tuple[int, list[chess.Move], chess.Board] | None:
+    """(k, moves, board after k plies): a new line from ply k, replacing the
+    recorded plies from there, that reaches *target* exactly and from which
+    the next reading follows too; or None. Tried first: one recent piece's
+    two moves merged into one; then the fewest plies to take back so that
+    *target* follows by a route starting with a different move. See RECOVER."""
+    if following is None:
+        return None
+    nxt = following[::-1] if flipped else following
+    if _explains_next(_board_after(moves_san), [], nxt):
+        return None      # a frame caught mid-move: the game goes on from here (traced)
+
+    def fits_next(board: chess.Board, seq: list[chess.Move]) -> bool:
+        # the next reading may be a square off (noise) as well as a move on
+        b = board.copy(stack=False)
+        for mv in seq:
+            b.push(mv)
+        return _hamming(_placement_of(b), nxt) <= FUZZ or _explains_next(b, [], nxt)
+
+    n = len(moves_san)
+    boards = [chess.Board()]
+    played = []
+    for san in moves_san:
+        b = boards[-1].copy(stack=False)
+        played.append(b.parse_san(san))
+        b.push(played[-1])
+        boards.append(b)
+    # A piece moved twice by one side around an opponent's move was one move
+    # dragged through a square on the way (traced: 21.Qe2 Rfc8 22.Qc2 for
+    # 21.Qc2 Rfc8): the same position with the other side to move, so the
+    # next move can't be found from it. Try the direct move instead.
+    for i in range(max(0, n - RECOVER_PLIES), n - 2):
+        a, b2 = played[i], played[i + 2]
+        direct = chess.Move(a.from_square, b2.to_square)
+        if a.to_square != b2.from_square or direct not in boards[i].legal_moves:
+            continue
+        line = [direct, played[i + 1]] + played[i + 3:]
+        b = boards[i].copy(stack=False)
+        if not all(b.is_legal(mv) and (b.push(mv) or True) for mv in line):
+            continue
+        here = _placement_of(b)
+        if here == target:
+            if fits_next(b, []):
+                return i, line, boards[i]
+            continue
+        if not _reachable(here, target):
+            continue
+        seq, _ = _find_sequence(b, target, MAX_DEPTH, NODE_BUDGET // 10)
+        if seq and _lands_exactly(b, seq, target) and fits_next(b, seq):
+            return i, line + seq, boards[i]
+    for back in range(1, RECOVER_PLIES + 1):
+        k = n - back
+        if k < 0:
+            break
+        if history[k] == target or not _reachable(history[k], target):
+            continue
+        start = boards[k]
+        seq, _ = _find_sequence(start, target, min(MAX_DEPTH, back + 2), NODE_BUDGET // 20)
+        if not seq or not _lands_exactly(start, seq, target) or start.san(seq[0]) == moves_san[k]:
+            continue
+        if fits_next(start, seq):
+            return k, seq, start
+    return None
+
+
 def premove_is_white(premove: str, cur: str) -> bool:
     """Colour of the premoved piece (by its origin square in `cur`)."""
     sq = chess.parse_square(premove[:2])
@@ -700,6 +780,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
     undone_from: int | None = None  # ply count the board just reverted to (see the undo check)
     after_retract = False          # an undo / browse back / detour since the last accepted ply
     after_unreach1 = False         # an unexplainable reading a square off since the last accepted ply
+    last_retract = -1e9            # when the board last went back (undo, browsing, detour): see RECOVER
 
     def close(why: str = ""):
         nonlocal current, board, history, browsing, skipped, undone_from, pending_fuzzy, pending_seen, after_retract, after_unreach1
@@ -828,6 +909,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                     undo_seq = seq
             if undo_seq:
                 note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} taken back")
+                last_retract = ts
                 retract_to(len(history) - 2)
                 # a bunch of its own, for tests/trust_replay.py
                 note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(undo_seq).split()[-len(undo_seq) * 2:]))
@@ -868,6 +950,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
             note(ts, f"undo: plies {k + 1}-{n} ({' '.join(current.moves_san[k:n])}) shown briefly, taken back")
             retract_to(k)
             after_retract = True
+            last_retract = ts
             misses = 0
             continue
         if earlier and (browsing or earlier[-1] == n - 1 or (n - earlier[-1]) % 2 == 0):
@@ -879,9 +962,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} shown briefly, taken back")
                 retract_to(n - 1)
                 after_retract = True
+                last_retract = ts
                 misses = 0
                 continue
             browsing = True
+            last_retract = ts
             if earlier[-1] == n - 1:
                 undone_from = n - 1
             note(ts, f"browsing back to ply {earlier[-1]}")
@@ -1035,6 +1120,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 retract_to(len(history) - 2)
                 moves, info = cands, "undo"
                 after_retract = True
+                last_retract = ts
 
         if moves is None:
             # a noisy / mid-animation reading - step over it and try to resync
@@ -1044,6 +1130,34 @@ def reconstruct(readings: list[tuple[float, str | None]],
             note(ts, f"skip ({info}; {_hamming(cur_placement, target)} squares off) miss {misses}")
             if info == "unreachable" and _hamming(cur_placement, target) == 1:
                 after_unreach1 = True
+            if RECOVER and misses <= 3 and _hamming(cur_placement, target) >= RECOVER_MIN_DIFF \
+                    and (RECOVER >= 2 or info not in ("ambiguous", "fuzzy-ambiguous")) \
+                    and ts - last_retract > RECOVER_QUIET_S:
+                # Derailed: a wrong ply was accepted a little while ago (traced:
+                # "21.Qe2" for a queen dragged on its way to c2, then 22.Qc2
+                # too, a tempo out, and nothing after it could be explained, so
+                # the game closed 60 plies early). If this reading follows
+                # exactly from a few plies back by another route, and the next
+                # reading follows from there, take that route instead.
+                fix = _recover(current.moves_san, history, target, next_state(ei), current.flipped)
+                if fix is not None:
+                    k, seq, start = fix
+                    note(ts, f"recover: plies {k + 1}-{current.ply} ({' '.join(current.moves_san[k:])}) "
+                             f"replaced by {start.variation_san(seq)}")
+                    retract_to(k)
+                    # a bunch of its own, for tests/trust_replay.py
+                    note(ts, f"ply {current.ply + 1}: " + " ".join(board.variation_san(seq).split()[-len(seq) * 2:]))
+                    current.doubtful.extend(range(k, k + len(seq)))
+                    for mv in seq:
+                        current.moves_san.append(board.san(mv))
+                        current.move_seconds.append(ts)
+                        board.push(mv)
+                        history.append(_placement_of(board))
+                    current.bridged += 1
+                    misses, last_ts, browsing, skipped, undone_from = 0, ts, False, [], None
+                    after_retract = after_unreach1 = False
+                    pending_fuzzy, pending_seen = [], 0.0
+                    continue
             if misses >= MAX_MISSES:
                 close("too many misses")
             continue
@@ -1104,6 +1218,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 note(ts, f"detour: retract to ply {back}")
                 retract_to(back)
                 after_retract = True
+                last_retract = ts
 
         if board.is_checkmate() or board.is_stalemate():
             # no legal move exists from here - anything read after this point
