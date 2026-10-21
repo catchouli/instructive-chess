@@ -81,7 +81,8 @@ Live catalog rebuilt from cached readings with derail recovery and the unsettled
 **1,776 games from 193 videos, 1,180 listed**, 1,650 matched. Every move right **83.2%** (was
 72.8%; lichess 86.1%, chess.com 81.8%), clocks 83.0%, ratings 77.0% (lichess 55.0%), **0 wrong
 trusted moves of 44,394**, plies before the first error 95.5%. Costs against the 2026-10-20
-catalog: trusted plies 44,588 -> 44,394, listed 1,187 -> 1,180, whole openings 736 -> 735.
+catalog: trusted plies 44,588 -> 44,394, listed 1,187 -> 1,180, whole openings 736 -> 735. Then the lichess
+ratings fix: ratings 77.0% -> 81.8% (lichess 55.0% -> 70.3%), wrong rating sides 129 -> 138.
 
 ## Current state (2026-10-15)
 
@@ -294,6 +295,7 @@ Open: two arrows leaving one square in opposite directions read as one long arro
 | Per-video reconciliation using the narrator's side (`catalog.reconcile_ratings`): the narrator's rating is one account all video long, so a read >250 from the video's median (of 4-digit reads, when two exist) is blanked; a narrator at 1500+ isn't paired with an opponent under 1000 | 14 wrong reads blanked, 0 right ones lost: wrong sides 32 → 18 of 272 (11.8% → 6.6%). Taking the median over *all* reads blanked a right 2747 on the blurry BdcY0WCN29Y (junk outnumbered real reads) | Yes |
 | Whole-line Tesseract read of the band ("(NNNN)" by regex) next to the glyph path; combined: either alone, agreement, or *nothing* on disagreement | One frame of 28 games (56 sides): glyph 38 right/4 wrong/16 missing, line 41/4/13, combined 42/2/12. Bartholomew's skin (glyph read "(2723)" as 2235 at 0.96) now comes out missing instead of wrong | Yes |
 | Tesseract digit whitelist | No change | No |
+| lichess: shrink each clock box to its tallest text line (the digits) before reading the rows beside it (`rating_read._digits_box`). Motion-found boxes take in the time bar and name row (Jqz9fdHOrPQ: 152x81 around a 37-px clock), so the reader looked past the row it wanted - most lichess misses were unread sides (237), not wrong ones (68) | Rescored 525 lichess games (ratings only merged into the catalog; the rescore path itself moves clocks/moves by ±2 games): lichess both sides right 55.0% -> 70.3%, all games 77.0% -> **81.8%**; sides missing 339 -> 220, **wrong 129 -> 138** (some are the narrator's rating read for the opponent; per-video reconciliation blanks most: without it, wrong 209) | Yes |
 | Contrast stretch / CLAHE fallbacks | Didn't help; CLAHE produced garbage | **No** |
 
 ## Ground truth

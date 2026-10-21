@@ -728,6 +728,32 @@ def _row_rating(gray: np.ndarray, x0: int, y0: int, x1: int, y1: int,
     return (best[1], best[2]) if best else None
 
 
+def _digits_box(gray, clock):
+    """The clock box shrunk to its tallest line of text - the clock's own
+    digits. A box found by motion can take in lichess's time bar and the
+    name row beside the clock (Jqz9fdHOrPQ: 152x81 around a 37-px clock),
+    and then the row this reader wants is inside the box, not beside it."""
+    cx, cy, cw, ch = clock
+    crop = gray[max(0, cy):cy + ch, max(0, cx):cx + cw]
+    if crop.size == 0:
+        return clock
+    _, bw = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    ink = bw > 0 if (bw > 0).mean() < 0.5 else bw == 0
+    rows = np.nonzero(ink.mean(axis=1) > 0.02)[0]
+    if len(rows) == 0:
+        return clock
+    lines, start = [], rows[0]
+    for a, b in zip(rows, rows[1:]):
+        if b - a > 1:
+            lines.append((start, a))
+            start = b
+    lines.append((start, rows[-1]))
+    top, bot = max(lines, key=lambda ln: ln[1] - ln[0])
+    if len(lines) < 2 or bot - top < ch // 4 or (bot - top + 1) * 1.6 > ch:
+        return clock      # one line, or already tight
+    return (cx, cy + top, cw, bot - top + 1)
+
+
 def read_ratings_beside_clocks(frame_bgr: np.ndarray, board_box, upper_clock, lower_clock) -> RatingReading:
     """Read each player's rating from the row of text beside their clock:
     just below the top player's clock and just above the bottom player's -
@@ -744,6 +770,7 @@ def read_ratings_beside_clocks(frame_bgr: np.ndarray, board_box, upper_clock, lo
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     w_img = gray.shape[1]
     bx, by, bw, bh = board_box.as_tuple() if hasattr(board_box, "as_tuple") else board_box
+    upper_clock, lower_clock = _digits_box(gray, upper_clock), _digits_box(gray, lower_clock)
 
     def band(clock, below: bool, other):
         cx, cy, cw, ch = clock
