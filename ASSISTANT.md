@@ -89,6 +89,11 @@ just the narrators' favourites.
   already work: 46 of the 215 videos cached so far are stream VODs, including the two-hour
   Titled Tuesday streams. His chess.com and lichess accounts are already in the real-game
   archives, so most of those games should verify.
+- **Naroditsky's speedrun series, all of it (2026-10-21).** Stream commentary turned out to be
+  mostly move-calling; his speedruns are made to teach, explaining moves and openings as he
+  plays. He doesn't re-explain basics every time, so opening coverage needs the whole series
+  (388 videos on his channel, ~213 hours), not a sample. Scanned in batches, each ordered to
+  add the openings not yet covered (the titles name them).
 - **Then as many master-level players as possible.** Each narrator's coverage is deep along
   their own repertoire and thin elsewhere, so breadth comes from more channels with
   different repertoires, not just more videos from the same ones. Today: GingerGM, John
