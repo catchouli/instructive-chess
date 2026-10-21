@@ -257,6 +257,29 @@ creator's video, so it must be theirs.
 - Reliability fixes: a reply looping on "]}]}" until max_tokens is retried, and units a
   reply leaves out are asked for again.
 
+### 2026-10-22: Naroditsky's speedruns are twice as instructive
+
+All 253 videos relabelled with prompt v3 (Haiku 5.5, $4.85: more videos, a longer prompt and
+retries than the $2.40 estimate). Share of units labelled instructive with their evidence found
+in the transcript:
+
+| Source | Videos | Units | Instructive | Opening / middlegame / late |
+| --- | --- | --- | --- | --- |
+| Naroditsky: Theory speedrun | 33 | 1,494 | 55% | 47% / 65% / 49% |
+| Naroditsky: original speedrun | 15 | 1,254 | 52% | 46% / 61% / 43% |
+| Naroditsky: Sensei speedrun | 10 | 225 | 50% | 45% / 61% / - |
+| GingerGM | 38 | 10,703 | 28% | 15% / 37% / 25% |
+| John Bartholomew | 37 | 14,402 | 28% | 13% / 35% / 26% |
+| Eric Rosen | 95 | 27,782 | 24% | 16% / 29% / 20% |
+| Naroditsky: streams and blitz | 7 | 1,438 | 10% | 4% / 14% / 8% |
+
+The format matters more than the person: Naroditsky's own streams are the least instructive
+source. In the opening his speedruns are three times as instructive as the streams, which is
+where the assistant needs it. Sample ideas from the Theory speedruns: "In the Accelerated
+Dragon, Black delays ...d6 to avoid transposing into the main-line Dragon"; "Black's ...e5
+comes with tempo and produces a King's Indian-style structure". 142 trusted opening ideas from
+33 Theory videos so far. Run-on text after an idea still slips through now and then.
+
 Next:
 1. Cat reviews v3 (`assistant/cache/review_v3.html`); iterate; then relabel everything (~$2.40; the Batch API would halve
    it), and measure the instructive share by ply, narrator, and stream versus recorded video.
