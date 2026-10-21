@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sample = [json.loads(line) for line in SAMPLE.read_text().splitlines()]
     if args.command == "label":
-        var = "ANTHROPIC_API_KEY" if args.model.startswith("claude") else "ZAI_API_KEY"
+        var = "HAIKU_API_KEY" if args.model.startswith("claude") else "ZAI_API_KEY"
         key = os.environ.get(var, "")
         got, usage = {}, collections.Counter()
         for s in sample:

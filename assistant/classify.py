@@ -4,7 +4,7 @@ chatter with a cheap model, and restate the instructive ones as short ideas.
     scanner/.venv/bin/python assistant/classify.py VIDEO_ID [VIDEO_ID ...]
         [--model claude-haiku-5-5] [--catalog PATH] [--force]
 
-Claude models need ANTHROPIC_API_KEY, z.ai's GLM models (--model glm-5.3-flash) ZAI_API_KEY.
+Claude models need HAIKU_API_KEY, z.ai's GLM models (--model glm-5.3-flash) ZAI_API_KEY.
 
 One request per BATCH consecutive units of a game (WORKERS at once), so the model reads the
 commentary in order (captions cut sentences across units). Labels are saved
@@ -107,7 +107,8 @@ def ask(model: str, payload: list[dict], key: str) -> tuple[list[dict], dict]:
 
 def ask_claude(model: str, payload: list[dict]) -> tuple[list[dict], dict]:
     global _claude
-    _claude = _claude or anthropic.Anthropic(max_retries=6)
+    # its own variable, not ANTHROPIC_API_KEY, which other tools (Claude Code) pick up too
+    _claude = _claude or anthropic.Anthropic(api_key=os.environ.get("HAIKU_API_KEY"), max_retries=6)
     use = {"prompt_tokens": 0, "completion_tokens": 0}
     for effort in ("low", "medium", "medium"):
         res = _claude.messages.create(
@@ -230,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--catalog", type=Path, default=positions.CATALOG)
     ap.add_argument("--force", action="store_true", help="relabel videos already labelled")
     args = ap.parse_args(argv)
-    var = "ANTHROPIC_API_KEY" if args.model.startswith("claude") else "ZAI_API_KEY"
+    var = "HAIKU_API_KEY" if args.model.startswith("claude") else "ZAI_API_KEY"
     key = os.environ.get(var, "")
     if not key:
         print(f"{var} is not set", file=sys.stderr)

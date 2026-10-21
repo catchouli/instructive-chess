@@ -73,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.tag:
         ap.error("label needs a TAG")
     units = json.loads(UNITS.read_text())
-    var = "ANTHROPIC_API_KEY" if args.model.startswith("claude") else "ZAI_API_KEY"
+    var = "HAIKU_API_KEY" if args.model.startswith("claude") else "ZAI_API_KEY"
     key = os.environ.get(var, "")
     got, usage = {}, collections.Counter()
     for u in units:

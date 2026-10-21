@@ -208,7 +208,8 @@ is available, kept in an environment variable, never in the repo).
 ### 2026-10-21: Claude Haiku 5.5 instead of GLM
 
 GLM was dropped (always thinks, rate-limited at 6 requests, slow). Claude models now run through
-the Anthropic API (`ANTHROPIC_API_KEY`, prepaid credits);
+the Anthropic API (key in `HAIKU_API_KEY`, kept apart from `ANTHROPIC_API_KEY` so other tools
+don't pick it up; prepaid credits);
 `classify.py` defaults to `claude-haiku-5-5` at effort low with a JSON schema for the labels.
 
 - **New validation set** (`assistant/validate.py`): 80 random units (seed 20261021) in
