@@ -1,0 +1,343 @@
+{
+ "note": "Real frames sampled at random game times (seed 7): 12 per site where arrows.py found arrows, 6 where it found none. Labelled by Claude by eye from 480x480 crops with square names stamped on; one unreadable lichess frame left out. Not verified by a person yet.",
+ "frames": [
+  {
+   "video": "WM0vlYWi33I",
+   "t": 780.8,
+   "site": "chesscom",
+   "flipped": true,
+   "file": "chesscom_WM0vlYWi33I_780_flipped.png",
+   "arrows": [
+    "b6g1"
+   ]
+  },
+  {
+   "video": "4GQ57vMq5gs",
+   "t": 1172.5,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_4GQ57vMq5gs_1172.png",
+   "arrows": []
+  },
+  {
+   "video": "7rteybW5Vjk",
+   "t": 994.7,
+   "site": "chesscom",
+   "flipped": true,
+   "file": "chesscom_7rteybW5Vjk_994_flipped.png",
+   "arrows": []
+  },
+  {
+   "video": "nCaHGBJiCRw",
+   "t": 2087.2,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_nCaHGBJiCRw_2087.png",
+   "arrows": []
+  },
+  {
+   "video": "eAq9LsCK-xg",
+   "t": 1340.0,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_eAq9LsCK-xg_1339.png",
+   "arrows": []
+  },
+  {
+   "video": "6RTjPSXYrPE",
+   "t": 7913.8,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_6RTjPSXYrPE_7913.png",
+   "arrows": []
+  },
+  {
+   "video": "sJ649Mg0N4g",
+   "t": 1973.1,
+   "site": "chesscom",
+   "flipped": true,
+   "file": "chesscom_sJ649Mg0N4g_1973_flipped.png",
+   "arrows": []
+  },
+  {
+   "video": "Vy6j7N_Wh0o",
+   "t": 1455.3,
+   "site": "chesscom",
+   "flipped": true,
+   "file": "chesscom_Vy6j7N_Wh0o_1455_flipped.png",
+   "arrows": [
+    "e4e5"
+   ]
+  },
+  {
+   "video": "bH5hjDpYj7o",
+   "t": 3360.9,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_bH5hjDpYj7o_3360.png",
+   "arrows": [
+    "e2e4"
+   ]
+  },
+  {
+   "video": "RUYbO35XVCE",
+   "t": 429.7,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_RUYbO35XVCE_429.png",
+   "arrows": [
+    "d1h5",
+    "h5f4"
+   ]
+  },
+  {
+   "video": "bIxvPbhuTpo",
+   "t": 1352.8,
+   "site": "chesscom",
+   "flipped": true,
+   "file": "chesscom_bIxvPbhuTpo_1352_flipped.png",
+   "arrows": [
+    "a2a1",
+    "e4g5"
+   ]
+  },
+  {
+   "video": "qW-mT-FbLnA",
+   "t": 1368.8,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_qW-mT-FbLnA_1368.png",
+   "arrows": [
+    "g6c2"
+   ]
+  },
+  {
+   "video": "WM0vlYWi33I",
+   "t": 161.4,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_WM0vlYWi33I_161.png",
+   "arrows": [
+    "e4d5"
+   ]
+  },
+  {
+   "video": "Vy6j7N_Wh0o",
+   "t": 351.4,
+   "site": "chesscom",
+   "flipped": true,
+   "file": "chesscom_Vy6j7N_Wh0o_351_flipped.png",
+   "arrows": [
+    "b5c6"
+   ]
+  },
+  {
+   "video": "vkPUOqxBWOc",
+   "t": 1102.0,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_vkPUOqxBWOc_1102.png",
+   "arrows": [
+    "g2h3"
+   ]
+  },
+  {
+   "video": "dJYcXok1_wQ",
+   "t": 1744.7,
+   "site": "chesscom",
+   "flipped": true,
+   "file": "chesscom_dJYcXok1_wQ_1744_flipped.png",
+   "arrows": [
+    "e6h3"
+   ]
+  },
+  {
+   "video": "RUYbO35XVCE",
+   "t": 152.4,
+   "site": "chesscom",
+   "flipped": false,
+   "file": "chesscom_RUYbO35XVCE_152.png",
+   "arrows": [
+    "f8e7",
+    "c1g5"
+   ]
+  },
+  {
+   "video": "dJYcXok1_wQ",
+   "t": 196.1,
+   "site": "chesscom",
+   "flipped": true,
+   "file": "chesscom_dJYcXok1_wQ_196_flipped.png",
+   "arrows": [
+    "g5g2"
+   ]
+  },
+  {
+   "video": "zA4K0Em0h1I",
+   "t": 7830.8,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_zA4K0Em0h1I_7830_flipped.png",
+   "arrows": []
+  },
+  {
+   "video": "roDHGRbdQR0",
+   "t": 5852.8,
+   "site": "lichess",
+   "flipped": false,
+   "file": "lichess_roDHGRbdQR0_5852.png",
+   "arrows": []
+  },
+  {
+   "video": "FyRURHDDqWY",
+   "t": 728.1,
+   "site": "lichess",
+   "flipped": false,
+   "file": "lichess_FyRURHDDqWY_728.png",
+   "arrows": []
+  },
+  {
+   "video": "rRKrIYaEj2c",
+   "t": 31348.9,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_rRKrIYaEj2c_31348_flipped.png",
+   "arrows": []
+  },
+  {
+   "video": "XNNNC0b-G8I",
+   "t": 3721.1,
+   "site": "lichess",
+   "flipped": false,
+   "file": "lichess_XNNNC0b-G8I_3721.png",
+   "arrows": []
+  },
+  {
+   "video": "roDHGRbdQR0",
+   "t": 4228.6,
+   "site": "lichess",
+   "flipped": false,
+   "file": "lichess_roDHGRbdQR0_4228.png",
+   "arrows": []
+  },
+  {
+   "video": "acW90Bw2trY",
+   "t": 298.1,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_acW90Bw2trY_298_flipped.png",
+   "arrows": [
+    "d8c8"
+   ]
+  },
+  {
+   "video": "zA4K0Em0h1I",
+   "t": 7590.3,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_zA4K0Em0h1I_7590_flipped.png",
+   "arrows": [
+    "c5b4"
+   ]
+  },
+  {
+   "video": "roDHGRbdQR0",
+   "t": 8518.6,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_roDHGRbdQR0_8518_flipped.png",
+   "arrows": [
+    "e4c4",
+    "b3c2"
+   ]
+  },
+  {
+   "video": "_uefkBkduUQ",
+   "t": 247.0,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess__uefkBkduUQ_246_flipped.png",
+   "arrows": [
+    "e7c8",
+    "c8d6"
+   ]
+  },
+  {
+   "video": "_uefkBkduUQ",
+   "t": 1620.9,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess__uefkBkduUQ_1620_flipped.png",
+   "arrows": [
+    "e6d5"
+   ]
+  },
+  {
+   "video": "zA4K0Em0h1I",
+   "t": 12314.7,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_zA4K0Em0h1I_12314_flipped.png",
+   "arrows": [
+    "c5d7"
+   ]
+  },
+  {
+   "video": "acW90Bw2trY",
+   "t": 480.1,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_acW90Bw2trY_480_flipped.png",
+   "arrows": [
+    "e3b6",
+    "f6d7",
+    "c7b6",
+    "a8c8"
+   ]
+  },
+  {
+   "video": "acW90Bw2trY",
+   "t": 158.0,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_acW90Bw2trY_158_flipped.png",
+   "arrows": [
+    "b2b4",
+    "a2a3",
+    "a7a5"
+   ]
+  },
+  {
+   "video": "lAniuIChYuA",
+   "t": 996.6,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_lAniuIChYuA_996_flipped.png",
+   "arrows": [
+    "d3g3",
+    "d3c3"
+   ]
+  },
+  {
+   "video": "rhtS6W0qylA",
+   "t": 424.8,
+   "site": "lichess",
+   "flipped": true,
+   "file": "lichess_rhtS6W0qylA_424_flipped.png",
+   "arrows": [
+    "b4c6"
+   ]
+  },
+  {
+   "video": "roDHGRbdQR0",
+   "t": 5880.5,
+   "site": "lichess",
+   "flipped": false,
+   "file": "lichess_roDHGRbdQR0_5880.png",
+   "arrows": [
+    "a2a5",
+    "c1e3"
+   ]
+  }
+ ]
+}

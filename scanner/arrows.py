@@ -30,7 +30,8 @@ import numpy as np
 # brush colours, RGB
 CHESSCOM = {"orange": (255, 167, 0)}
 LICHESS = {"green": (0x15, 0x78, 0x1B), "red": (0x88, 0x20, 0x20), "blue": (0x00, 0x30, 0x88), "yellow": (0xE6, 0x8F, 0x00)}
-LICHESS_ALPHA = 0.6        # to be confirmed on real frames
+LICHESS_ALPHA = 0.6        # fits real frames (35 hand-labelled)
+LICHESS_HIGHLIGHT = (155, 199, 0)   # the last move's squares, at 0.41
 
 
 @dataclass(frozen=True)
@@ -124,10 +125,14 @@ def colour_masks(board_rgb: np.ndarray, style: Style) -> dict[str, np.ndarray]:
             for r in range(8):
                 y0, x0 = int(r * sq + 2), int(f * sq + 2)
                 (light if (f + r) % 2 == 0 else dark).append(img[y0:y0 + 4, x0:x0 + 4].reshape(-1, 3))
-        bases = [np.median(np.concatenate(light), axis=0), np.median(np.concatenate(dark), axis=0),
-                 # ...and over the pieces' bodies: an arrow starts on the piece
-                 # it moves, so a short one is half over it
-                 np.array([245, 245, 245], np.float32), np.array([40, 40, 40], np.float32)]
+        squares = [np.median(np.concatenate(light), axis=0), np.median(np.concatenate(dark), axis=0)]
+        bases = squares + [
+            # ...over the pieces' bodies: an arrow starts on the piece it
+            # moves, so a short one is half over it
+            np.array([245, 245, 245], np.float32), np.array([40, 40, 40], np.float32)] + [
+            # ...and over the last move's highlighted squares (lichess:
+            # rgba(155, 199, 0, 0.41)), which on their own are plain board
+            0.41 * np.array(LICHESS_HIGHLIGHT, np.float32) + 0.59 * b for b in squares]
     out = {}
     for name, rgb in style.colours.items():
         c = np.array(rgb, np.float32)
@@ -184,13 +189,18 @@ def score(mask: np.ndarray, c, style: Style, flipped: bool) -> float:
     base = q - u * (style.head_len * t)
     off = (style.shaft / 2 + style.head_width / 2 * t) / 2
     head = _sample(mask, np.array([base + nrm * off, base - nrm * off]), sq).mean()
+    # and the tail end is narrow: on a translucent arrow the head is faint,
+    # so this is what tells e3-b6 from b6-e3
+    p0, q0 = segs[0]
+    u0 = (q0 - p0) / np.linalg.norm(q0 - p0)
+    n0 = np.array([-u0[1], u0[0]])
+    tail_at = p0 + u0 * (style.tail_start + style.head_len * (1 - t))
+    tail = _sample(mask, np.array([tail_at + n0 * off, tail_at - n0 * off]), sq).mean()
     # nothing past the tip, nor before the tail (that would be a longer arrow).
     # Past the tip it must carry straight on for most of a square: another
     # arrow into the same square (a capture and its recapture) only puts its
     # head there.
     beyond = float(_sample(mask, np.array([q + u * k for k in (0.35, 0.65, 0.95)]), sq).all())
-    p0, q0 = segs[0]
-    u0 = (q0 - p0) / np.linalg.norm(q0 - p0)
     before = _sample(mask, np.array([p0 + u0 * (style.tail_start - k) for k in (0.25, 0.4)]), sq).mean()
     # thin: the colour stops just beside the shaft (a highlighted square,
     # translucent green on lichess, is filled edge to edge)
@@ -201,7 +211,8 @@ def score(mask: np.ndarray, c, style: Style, flipped: bool) -> float:
         u1 = (q1 - p1) / np.linalg.norm(q1 - p1)
         n1 = np.array([-u1[1], u1[0]]) * (style.shaft / 2 + 0.12)
         side = _sample(mask, np.concatenate([mid + n1, mid - n1]), sq).mean()
-    return float(cover * (0.5 + 0.5 * head) * (1 - 0.7 * beyond) * (1 - 0.5 * before) * (1 - 0.7 * side))
+    return float(cover * (0.5 + 0.5 * head) * (1 - 0.3 * tail) * (1 - 0.7 * beyond) * (1 - 0.5 * before)
+                 * (1 - 0.7 * side))
 
 
 def detect(board_bgr: np.ndarray, flipped: bool, style_name: str, threshold: float = 0.6) -> list[Arrow]:
@@ -221,11 +232,18 @@ def detect(board_bgr: np.ndarray, flipped: bool, style_name: str, threshold: flo
                 break
             f, r, f2, r2 = c
             found.append(Arrow(square_name(f, r), square_name(f2, r2), colour, round(best, 3)))
-            # explained: clear the arrow's pixels so the next one can be found
+            # explained: clear the arrow's own pixels (its shaft and head, no
+            # wider) so the next one can be found - arrows often meet on a square
             pts = path(c, style, flipped)
+            m8 = mask.view(np.uint8)
             for p, q in zip(pts[:-1], pts[1:]):
-                cv2.line(mask.view(np.uint8), tuple(int(v) for v in p * sq), tuple(int(v) for v in q * sq), 0,
-                         thickness=max(2, int(style.head_width * sq)))
+                cv2.line(m8, tuple(int(v) for v in p * sq), tuple(int(v) for v in q * sq), 0,
+                         thickness=max(2, int(style.shaft * 1.6 * sq)))
+            u = (pts[-1] - pts[-2]) / np.linalg.norm(pts[-1] - pts[-2])
+            nrm = np.array([-u[1], u[0]])
+            base = pts[-1] - u * style.head_len * 1.1
+            tri = np.array([pts[-1] + u * 0.05, base + nrm * style.head_width * 0.6, base - nrm * style.head_width * 0.6])
+            cv2.fillConvexPoly(m8, (tri * sq).astype(np.int32), 0)
     return found
 
 

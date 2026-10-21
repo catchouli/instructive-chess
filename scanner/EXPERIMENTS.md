@@ -222,6 +222,31 @@ Marks at the first wrong ply: none 166, rough 119, fuzzy 69, fuzzy+rough 55, dou
 | **Recover from a derail** (`reconstruct.RECOVER`, `_recover`): when a reading 3+ squares off can't be explained (misses ≤ 3), and the next reading doesn't follow from here either, re-explain it from up to 6 plies back: first one recent piece's two moves merged into one (traced: 21.Qe2 Rfc8 22.Qc2 for 21.Qc2 Rfc8, a tempo out, and the game closed 63 plies early), then the fewest plies taken back with a route starting differently. Exact landing required, the next reading must follow (a square off allowed); the replaced plies are doubtful (end trust) | First version, recovery at misses 3-9: never fired (the readings are 7+ plies on by then; a 500k-node search fails). At misses ≤ 3, on hard+guard (39 videos, 600 matched): every move right 414 → 417, right plies +332, but correct games broken by a frame caught mid-move (6RTjPSXYrPE 126/126 → 64). + next reading must *not* follow from here: 418, right plies +414, but 4 correct games made wrong: recoveries right after browsing/undo (a line being shown) or on an "ambiguous" reading (post-game analysis). + no recovery within 30 s of an undo/browse/detour (`RECOVER_QUIET_S`), nor on ambiguous readings: **421** right games (+7), right plies +332, 0 wrong trusted both arms, trusted plies −12, shown −1, matched −1; no correct game made wrong (PEpvyA_2kG4 65/65 → 61/61). Allowing ambiguous readings (RECOVER=2): 420 | Testing on the whole library |
 | Hidden 4-ply repetitions: the flicker vote smooths away a repetition played a second a move, so the record loses 4 plies. Raw frames show the cycle in 31 of the 44 games, its first position (which browsing the move list never shows) in 23. Detector: quiet move, reply, both reversed, accepted when raw frames since the last move show the first cycle position and one more, each a square off at most, and only one cycle fits | On the 44: 8 right, 3 wrong, 33 not found. On gaps of 150 all-right games: fired in 5 (false). At 1 fps the frames are too few and too noisy; a dense re-read of such moments might work | **No** |
 
+## Arrows (from 2026-10-21)
+
+Narrators draw arrows while they talk ("try to go here, do this, checkmate" over an arrow h2-h6),
+which turns vague commentary into concrete lines. `arrows.py` reads them off one board crop;
+`tests/arrow_synth.py` (narrator-like arrows drawn onto real frames: mostly the next moves played,
+spread over opening, middlegame and late game) and `tests/arrow_real.py` (35 real frames, labelled
+by Claude by eye, not yet checked by a person) measure it.
+
+| Idea | Result | Kept? |
+|---|---|---|
+| Score every queen/knight line: shaft coverage by the brush colour, head present, colour stops past the tip; best first | First synthetic run: recall 4% (chess.com) - the head check sampled where a triangular head is still narrower than assumed. Fixed: 93% / 91% recall on random arrows | Yes |
+| Realistic synthetic arrows (the game's next moves, alternatives, any lines) | chess.com 95% precision / 89% recall, lichess 80% / 78%: real arrows were already on many frames (frames showing arrows are now skipped: 3 of 63 chess.com, 8 of 68 lichess) | Yes (test) |
+| lichess colour model: the brush blended over light and dark squares, piece bodies and the last-move highlight; a pixel must also stand apart from those plain colours (red over a brown wood board is close to the board) | One-square arrows found (they lie half over the moving piece); 4 false red arrows on a wood board gone | Yes |
+| Thin: colour stops beside the shaft (a highlighted square is filled) | A false one-square arrow on lichess's green highlight gone | Yes |
+| Past the tip the colour must carry straight on for a square to count against the arrow (arrows meeting on a square) | chess.com synthetic recall 89% -> 94% | Yes |
+| Tail must be narrow (direction of translucent arrows) | Real lichess: two arrows read backwards now not read at all (precision 15/18 -> 16/17) | Yes |
+| Erase only a found arrow's shaft and head before the next (it erased a head-wide band, wiping a meeting arrow's head) | Synthetic chess.com 99% -> 100% precision | Yes |
+| Threshold 0.55 instead of 0.6 | Real lichess +1 arrow, synthetic +1 false arrow | No (precision first) |
+
+**Now:** synthetic (60 frames each) chess.com 100% precision / 95% recall, lichess 100% / 96%;
+real (35 frames, 35 arrows) chess.com 15/15 and 15/15, lichess 16/17 precision, 16/20 recall.
+Real arrows: the reader fired on ~5% of random chess.com game frames and ~11% of lichess ones.
+Open: two arrows leaving one square in opposite directions read as one long arrow; circles
+(square marks) aren't read; chess.com's other brush colours not seen yet.
+
 ## Clocks
 
 | Idea | Result | Kept? |
