@@ -52,7 +52,7 @@ TRUTH_CACHE = VIDEO_CACHE / "truth"
 # chess.com accounts whose games appear on each channel.
 ACCOUNTS = {
     "Eric Rosen": ["imrosen", "ohnomyrosen", "someonecallanambulance"],
-    "Daniel Naroditsky": ["SenseiDanya", "OhMyLands", "danielnaroditsky"],
+    "Daniel Naroditsky": ["SenseiDanya", "OhMyLands", "danielnaroditsky", "FrankfurtAirport"],
     "John Bartholomew": ["Fins0905"],
     "GingerGM": ["Ginger_GM"],
 }
