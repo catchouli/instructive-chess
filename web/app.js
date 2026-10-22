@@ -1,6 +1,6 @@
 import {
   parseQuery, matchesPrefix, replay, moveLabel, toPgn, boardSvg,
-  withTimestamp, fmtTime, topRating, matchesMinRating, matchesPov, matchesSpeedrun,
+  withTimestamp, fmtTime, topRating, matchesMinRating, matchesPov, matchesTags, TAG_GROUPS,
   narratorSide, trustedView,
 } from './lib.js';
 import { Chess } from './vendor/chess.js';
@@ -15,7 +15,9 @@ const els = {
   clear: document.getElementById('clear'),
   minRating: document.getElementById('min-rating'),
   pov: document.getElementById('pov'),
-  noSpeedrun: document.getElementById('no-speedrun'),
+  tagFilter: document.getElementById('tag-filter'),
+  tagSummary: document.getElementById('tag-summary'),
+  tagMenu: document.getElementById('tag-menu'),
   status: document.getElementById('status'),
   results: document.getElementById('results'),
   sboard: document.getElementById('sboard'),
@@ -47,7 +49,10 @@ async function init() {
   els.clear.addEventListener('click', () => { els.query.value = ''; render(); els.query.focus(); });
   els.minRating.addEventListener('input', debounce(render, 130));
   els.pov.addEventListener('change', render);
-  els.noSpeedrun.addEventListener('change', render);
+  buildTagMenu();
+  els.tagMenu.addEventListener('change', () => { updateTagSummary(); render(); });
+  // close the menu on a click elsewhere
+  document.addEventListener('click', (e) => { if (!els.tagFilter.contains(e.target)) els.tagFilter.open = false; });
 
   board = Chessground(els.sboard, {
     movable: { free: false, color: 'white', showDests: true, events: { after: onBoardMove } },
@@ -130,7 +135,7 @@ function drawSearchBoard(sans, matched) {
     `<li><button type="button" data-san="${escapeHtml(san)}">${escapeHtml(san)}</button> <span>${n} game${n === 1 ? '' : 's'}</span></li>`).join('');
 }
 
-// The search and filters live in the URL hash (#q=...&pov=white&min=2000&nospeedrun=1)
+// The search and filters live in the URL hash (#q=...&pov=white&min=2000&tags=speedrun,blitz)
 // so a search can be bookmarked or shared.
 function readHash() {
   const raw = location.hash.replace(/^#/, '');
@@ -138,7 +143,9 @@ function readHash() {
   els.query.value = params.get('q') || '';
   els.pov.value = ['white', 'black'].includes(params.get('pov')) ? params.get('pov') : '';
   els.minRating.value = /^\d+$/.test(params.get('min') || '') ? params.get('min') : '';
-  els.noSpeedrun.checked = params.get('nospeedrun') === '1';
+  const tags = new Set((params.get('tags') || '').split(',').filter(Boolean));
+  if (params.get('nospeedrun') === '1') { tags.add('stream'); tags.add('video'); }   // links from before tags
+  setSelectedTags(tags);
 }
 
 function writeHash() {
@@ -146,9 +153,35 @@ function writeHash() {
   if (els.query.value) params.set('q', els.query.value);
   if (els.pov.value) params.set('pov', els.pov.value);
   if (els.minRating.value !== '') params.set('min', els.minRating.value);
-  if (els.noSpeedrun.checked) params.set('nospeedrun', '1');
+  const tags = [...selectedTags()];
+  if (tags.length) params.set('tags', tags.join(','));
   const h = params.toString();
   history.replaceState(null, '', h ? '#' + h : location.pathname + location.search);
+}
+
+// --- the tag filter: a checkbox per tag, grouped (see lib.js TAG_GROUPS) ---
+
+function buildTagMenu() {
+  const counts = {};
+  for (const g of GAMES) for (const t of g.tags || []) counts[t] = (counts[t] || 0) + 1;
+  els.tagMenu.innerHTML = TAG_GROUPS.map((grp) => `<fieldset><legend>${grp.name}</legend>${
+    grp.tags.filter((t) => counts[t]).map((t) =>
+      `<label><input type="checkbox" value="${t}"> ${t} <span class="count">${counts[t]}</span></label>`).join('')
+  }</fieldset>`).join('') + '<p class="tag-help">Any ticked tag within a group, and every group.</p>';
+}
+
+function selectedTags() {
+  return new Set([...els.tagMenu.querySelectorAll('input:checked')].map((i) => i.value));
+}
+
+function setSelectedTags(tags) {
+  for (const i of els.tagMenu.querySelectorAll('input')) i.checked = tags.has(i.value);
+  updateTagSummary();
+}
+
+function updateTagSummary() {
+  const sel = [...selectedTags()];
+  els.tagSummary.textContent = sel.length ? `Tags: ${sel.join(', ')}` : 'Tags: any';
 }
 
 function byNewest(a, b) {
@@ -162,17 +195,17 @@ function render() {
   const { sans, ok, bad } = parseQuery(raw);
   const minRating = els.minRating.value === '' ? null : Number(els.minRating.value);
   const pov = els.pov.value || null;
-  const noSpeedrun = els.noSpeedrun.checked;
+  const tags = selectedTags();
 
   const matched = GAMES.filter((g) => matchesPrefix(g, sans) && matchesMinRating(g, minRating)
-    && matchesPov(g, pov) && matchesSpeedrun(g, noSpeedrun));
+    && matchesPov(g, pov) && matchesTags(g, tags));
   drawSearchBoard(sans, matched);
   const total = matched.length;
   const limit = sans.length === 0 ? DEFAULT_LIMIT : RESULT_LIMIT;
   const shown = matched.slice(0, limit);
   const ratingNote = (minRating != null ? ` · both rated ${minRating}+` : '')
     + (pov ? ` · narrator plays ${pov}` : '')
-    + (noSpeedrun ? ' · no speedruns' : '');
+    + (tags.size ? ` · tags: ${[...tags].join(', ')}` : '');
 
   if (!GAMES.length) {
     els.status.textContent = 'No games in the catalog yet — run the video scanner to add some.';
@@ -206,7 +239,11 @@ function card(g, hl) {
   const rating = topRating(g);
   const ratingPill = rating != null
     ? `<span class="pill" title="higher-rated side (approximate - read from video)">~${rating}</span>` : '';
-  const speedrunPill = g.speedrun ? '<span class="pill speedrun" title="the narrator climbing a fresh account against weaker opponents">speedrun</span>' : '';
+  const TAG_TIPS = { speedrun: 'the narrator climbing a fresh account against weaker opponents',
+    stream: 'from a live stream', video: 'a recorded video', bullet: 'under 3 minutes each (from the clocks)',
+    blitz: 'up to 5 minutes each (from the clocks)', rapid: 'up to 15 minutes each (from the clocks)',
+    classical: 'over 15 minutes each (from the clocks)' };
+  const speedrunPill = (g.tags || []).map((t) => `<span class="pill tag" title="${TAG_TIPS[t] || ''}">${escapeHtml(t)}</span>`).join(' ');
   const side = narratorSide(g);
   const sideNote = side ? ` plays <span class="pov">${side === 'white' ? '♔ White' : '♚ Black'}</span>` : '';
   const summary = document.createElement('summary');

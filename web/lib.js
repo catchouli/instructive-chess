@@ -70,6 +70,25 @@ export function matchesSpeedrun(game, exclude) {
   return !exclude || !game.speedrun;
 }
 
+/** The tag groups (see scanner/catalog.py tag): a filter is "any of the ticked
+ *  tags" within a group and "all groups" across them, like a shop's filters. */
+export const TAG_GROUPS = [
+  { name: 'Video', tags: ['speedrun', 'stream', 'video'] },
+  { name: 'Time control', tags: ['bullet', 'blitz', 'rapid', 'classical'] },
+];
+
+/** Does the game carry, in every group with a tag ticked, one of the ticked
+ *  tags? `selected` is a Set of tag names; a game without any tag of a group
+ *  (no clock read: no time control) doesn't match a filter on that group. */
+export function matchesTags(game, selected) {
+  if (!selected || selected.size === 0) return true;
+  const tags = new Set(game.tags || []);
+  return TAG_GROUPS.every((g) => {
+    const want = g.tags.filter((t) => selected.has(t));
+    return want.length === 0 || want.some((t) => tags.has(t));
+  });
+}
+
 /** Strict prefix: does `game.moves_san` begin with exactly `qsans`? */
 export function matchesPrefix(game, qsans) {
   if (qsans.length === 0) return true;

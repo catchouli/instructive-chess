@@ -49,7 +49,10 @@
       <input id="min-rating" type="number" inputmode="numeric" min="0" step="50" placeholder="any"
              title="both players rated at least this (ratings are read from the video, approximate)">
     </label>
-    <label class="check"><input id="no-speedrun" type="checkbox"> Exclude speedruns</label>
+    <details class="tag-filter" id="tag-filter">
+      <summary id="tag-summary">Tags: any</summary>
+      <div class="tag-menu" id="tag-menu"></div>
+    </details>
   </div>
   <p id="status" class="status"></p>
   <ol id="results" class="results"></ol>

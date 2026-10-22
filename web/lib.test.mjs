@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   parseQuery, matchesPrefix, replay, toPgn, boardSvg, withTimestamp, fmtTime,
   gameRating, topRating, matchesMinRating, matchesPov, matchesSpeedrun, narratorSide, trustedView, MIN_SHOWN_PLY,
+  matchesTags,
 } from './lib.js';
 
 let pass = 0;
@@ -102,6 +103,18 @@ t('narratorSide / matchesPov: from the pov field; unknown side never matches an 
   assert.equal(matchesPov({ pov: 'black' }, 'black'), true);
   assert.equal(matchesPov({ pov: 'black' }, 'white'), false);
   assert.equal(matchesPov({}, 'white'), false);
+});
+
+t('matchesTags: any of the ticked tags within a group, every group across them', () => {
+  const g = { tags: ['speedrun', 'blitz'] };
+  assert.equal(matchesTags(g, new Set()), true);
+  assert.equal(matchesTags(g, new Set(['speedrun'])), true);
+  assert.equal(matchesTags(g, new Set(['stream'])), false);
+  assert.equal(matchesTags(g, new Set(['speedrun', 'stream'])), true);          // OR within Video
+  assert.equal(matchesTags(g, new Set(['speedrun', 'rapid'])), false);          // AND across groups
+  assert.equal(matchesTags(g, new Set(['speedrun', 'blitz', 'rapid'])), true);
+  assert.equal(matchesTags({ tags: ['stream'] }, new Set(['blitz'])), false);   // no clock: no time control
+  assert.equal(matchesTags({}, new Set(['stream'])), false);
 });
 
 t('matchesSpeedrun: only drops tagged speedruns, and only when asked', () => {

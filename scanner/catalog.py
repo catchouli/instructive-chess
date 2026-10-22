@@ -27,7 +27,7 @@ def is_speedrun(title: str) -> bool:
 
 
 def tag(entry: dict, speedrun: bool | None = None) -> None:
-    """The two fields the web app filters on besides the moves:
+    """The fields the web app filters on besides the moves:
 
     - `pov`: the colour the narrator (the channel's owner) played - the
       "instructive point of view". A player's own live board shows their
@@ -35,9 +35,52 @@ def tag(entry: dict, speedrun: bool | None = None) -> None:
       black. Verified against the real games' player names by
       tests/benchmark.py (the "narrator side" line).
     - `speedrun`: see is_speedrun.
+    - `tags`: the kind of video (see video_kind) and the time control (see
+      time_control), when known - e.g. ["speedrun", "blitz"].
     """
     entry["pov"] = "black" if entry.get("flipped") else "white"
     entry["speedrun"] = is_speedrun(entry.get("video_title", "")) if speedrun is None else bool(speedrun)
+    entry["tags"] = [t for t in (video_kind(entry), time_control(entry)) if t]
+
+
+CACHE = Path(__file__).resolve().parent / "cache"
+
+
+def video_kind(entry: dict) -> str:
+    """"speedrun", "stream" (a past live stream, from YouTube's metadata) or
+    "video" (recorded and edited)."""
+    if entry.get("speedrun"):
+        return "speedrun"
+    try:
+        info = json.loads((CACHE / f"{entry['video_id']}.info.json").read_text())
+    except (FileNotFoundError, KeyError, ValueError):
+        return "video"
+    return "stream" if info.get("was_live") or info.get("live_status") == "was_live" else "video"
+
+
+def time_control(entry: dict) -> str | None:
+    """"bullet" (under ~3 min), "blitz" (up to 5), "rapid" (up to 15) or
+    "classical", from the clocks at the start of the game, or None without
+    them. Each side's starting time is the median of its first readings (one
+    misread can't decide it). Where both sides were read they must agree:
+    on arena streams the tournament's countdown has been read as a player's
+    clock (all 10 "classical" games in the catalog of 2026-10-22). One side
+    alone is believed up to rapid. A lichess arena game the narrator
+    berserked starts at half time (3+0 at 90 s) and counts as played: bullet."""
+    def start(key):
+        vals = sorted(v for v in (entry.get(key) or [])[:8] if v is not None)
+        return vals[len(vals) // 2] if len(vals) >= 2 else None
+    w, b = start("clock_white_seconds"), start("clock_black_seconds")
+    if w is not None and b is not None:
+        if max(w, b) > 1.25 * min(w, b):
+            return None
+        t = max(w, b)
+    else:
+        t = w if w is not None else b
+        if t is None or t > 930:
+            return None
+    # a 3-minute game reads 179-184 s after its first moves (a second gone, or the increment)
+    return "bullet" if t < 175 else "blitz" if t <= 330 else "rapid" if t <= 930 else "classical"
 
 
 def _clock_seconds(values: list[float | None]) -> list[int | None]:
@@ -281,8 +324,12 @@ def main(argv: list[str] | None = None) -> int:
     write(entries, args.catalog)
     n_speed = sum(e["speedrun"] for e in entries)
     n_black = sum(e["pov"] == "black" for e in entries)
+    tags: dict[str, int] = {}
+    for e in entries:
+        for t in e["tags"]:
+            tags[t] = tags.get(t, 0) + 1
     print(f"tagged {len(entries)} games in {args.catalog}: {n_speed} speedrun, "
-          f"narrator black in {n_black}, {blanked} implausible rating(s) blanked")
+          f"narrator black in {n_black}, {blanked} implausible rating(s) blanked; tags {tags}")
     return 0
 
 
