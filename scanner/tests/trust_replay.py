@@ -45,6 +45,14 @@ KINDS = [
     ("unreach2+", re.compile(r"skip \(unreachable; [2-9]\d* squares off\)")),
     ("fuzzyamb", re.compile(r"skip \(fuzzy-ambiguous")),
     ("undo", re.compile(r"^undo")),
+    # finer kinds of undo: one move shown briefly and taken back (a piece
+    # dragged to show an idea - Naroditsky's habit while explaining), a
+    # bunch shown briefly, a piece passing through, a move replaced
+    ("undo1", re.compile(r"^undo: ply \d+ \S+ shown briefly")),
+    ("undo_bunch", re.compile(r"^undo: plies")),
+    ("undo_pass", re.compile(r"^undo: .*passing through")),
+    ("undo_replace", re.compile(r"^undo: ply \d+ \S+ taken back$")),
+    ("recover", re.compile(r"^recover")),
     ("browse", re.compile(r"^browsing back")),
     ("detour", re.compile(r"^detour")),
     ("premove", re.compile(r"^premove shown")),
@@ -56,6 +64,9 @@ PLY = re.compile(r"^ply (\d+): ")
 # A rule: (what happened before the bunch, bunch size) -> its plies are doubtful.
 RULES = {
     "retract": lambda ctx, n: bool(ctx & {"undo", "browse", "detour"}),
+    "undo_detour": lambda ctx, n: bool(ctx & {"undo", "detour"}),          # reconstruct.RETRACT_ENDS_TRUST
+    "recover": lambda ctx, n: "recover" in ctx,                             # reconstruct.RECOVER marks
+    "undo_but_brief1_detour": lambda ctx, n: bool(ctx & {"undo_bunch", "undo_pass", "undo_replace", "detour"}),
     "browse_detour": lambda ctx, n: bool(ctx & {"browse", "detour"}),
     "detour": lambda ctx, n: "detour" in ctx,
     "unreach_bunch": lambda ctx, n: "unreach1" in ctx and n >= 2,
@@ -142,7 +153,7 @@ def apply_marks(games: list[dict], catalog: Path) -> tuple[list[dict], int]:
             if abs(e["move_seconds"][0] - g["start_seconds"]) < 10 and g["moves_san"][:n] == e["moves_san"]:
                 out.append({**g, "moves_san": e["moves_san"], "move_seconds": e["move_seconds"],
                             "ambiguous_plies": e.get("ambiguous_plies") or [], "fuzzy_plies": e.get("fuzzy_plies") or [],
-                            "correct": min(g["correct"], n), "bunches": [b for b in g["bunches"] if b[0] < n]})
+                            "correct": None if g["correct"] is None else min(g["correct"], n), "bunches": [b for b in g["bunches"] if b[0] < n]})
                 break
     return out, len(games) - len(out)
 
@@ -166,7 +177,9 @@ def replay(log: Path, rule_sets: list[str], clocks: Path | None, marks: Path | N
             _, t = trust.assess(g["moves_san"], g["move_seconds"], clocks_checked_end=key in has_clocks,
                                 ambiguous=g["ambiguous_plies"], fuzzy=g["fuzzy_plies"], doubtful=doubtful(g, rules),
                                 rough=rough(g))
-            rows.append((key, t, g["correct"] >= t, t >= 12, t >= min(30, g["real_ply"])))
+            # a game with no real game (build --keep-unmatched) can't be judged wrong
+            ok = g["correct"] is None or g["correct"] >= t
+            rows.append((key, t, ok, t >= 12, t >= min(30, g["real_ply"] or len(g["moves_san"]))))
         s = [len(rows) - sum(r[2] for r in rows), sum(r[1] for r in rows), sum(r[3] for r in rows), sum(r[4] for r in rows)]
         line = f"{spec:<28} wrong trusted games {s[0]:>3}  trusted plies {s[1]:>6}  shown {s[2]:>5}  openings {s[3]:>5}"
         if base:
