@@ -280,6 +280,18 @@ Dragon, Black delays ...d6 to avoid transposing into the main-line Dragon"; "Bla
 comes with tempo and produces a King's Indian-style structure". 142 trusted opening ideas from
 33 Theory videos so far. Run-on text after an idea still slips through now and then.
 
+### 2026-10-22: first distilled opening guides
+
+`assistant/distill.py`: for an opening (games starting with its moves), every instructive
+idea from a trusted ply up to ply 30 with its evidence found in the transcript, written up
+by Sonnet 5.5 as a short study guide built only from those ideas, each point citing them
+(`assistant/cache/summaries.html`, local: citations link to the video moment). Prototype on
+three openings, ~$0.20 in all: the London (457 ideas, nearly all Eric Rosen), the Alapin
+Sicilian (68, mostly Naroditsky) and the Caro-Kann (183). The Alapin guide reads like a real
+one: Black's main systems, the 2...Nf6 3.e5 Nd5 4.d4 cxd4 5.Nf3 move order and why, the
+2...d5 lines with their plans and a trap, practical lessons; a few points stay vague ("a
+course recommends a different idea"), and any error in an idea carries through. For Cat to judge.
+
 Next:
 1. Cat reviews v3 (`assistant/cache/review_v3.html`); iterate; then relabel everything (~$2.40; the Batch API would halve
    it), and measure the instructive share by ply, narrator, and stream versus recorded video.
