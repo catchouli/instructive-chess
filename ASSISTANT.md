@@ -94,6 +94,13 @@ just the narrators' favourites.
   plays. He doesn't re-explain basics every time, so opening coverage needs the whole series
   (388 videos on his channel, ~213 hours), not a sample. Scanned in batches, each ordered to
   add the openings not yet covered (the titles name them).
+- **Candidate channels (researched 2026-10-22, for openings the four don't cover):** IM Alex
+  Banzea (~280 rating-climb videos: London, Jobava, KID, KIA, Caro-Kann), chessbrah / GM Aman
+  Hambleton (~250 opening speedruns: London, KID, Queen's Gambit, Colle, English), Chessexplained
+  / IM Christof Sielecki (~2,400 one-game blitz videos with live comments, mostly 2011-2016 on
+  ICC/Playchess/chess24 boards: a test of reading other sites), ChessDojo / IM Kostya Kavutskiy
+  (~55 speedruns, 1.d4 and KID), GMHikaru's educational "Slowkaru" speedruns. Pilot a few videos
+  of each (board read, games matched, instructive share) before scanning a channel in bulk.
 - **Then as many master-level players as possible.** Each narrator's coverage is deep along
   their own repertoire and thin elsewhere, so breadth comes from more channels with
   different repertoires, not just more videos from the same ones. Today: GingerGM, John
