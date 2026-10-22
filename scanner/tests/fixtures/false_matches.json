@@ -1,0 +1,13 @@
+{
+  "note": "Catalogued games the benchmark matched to the wrong real game, checked by hand. Keyed by video id and the game's start second (rounded). 'not' lists real games it must not be matched to, or [\"*\"] when its real game isn't in the archives at all (any match would be a stranger's game sharing the opening).",
+  "games": [
+    {
+      "video_id": "7ntWn4K1_E4",
+      "start_seconds": 1471,
+      "not": [
+        "*"
+      ],
+      "why": "The video (frame at 1500 s) shows SenseiDanya (White) vs GMHunter9, 9.Ng3 played; that game isn't in the archive window, and games from other players share its King's Indian Samisch for 11-16 plies (three matched in turn). Checked 2026-10-22."
+    }
+  ]
+}

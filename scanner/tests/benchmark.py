@@ -351,9 +351,28 @@ def _aligned(a: list[str], b: list[str]) -> int:
     return sum(block.size for block in sm.get_matching_blocks())
 
 
+_FALSE_MATCHES = {(g["video_id"], round(g["start_seconds"])): set(g["not"])
+                  for g in json.loads((Path(__file__).resolve().parent / "fixtures" / "false_matches.json")
+                                      .read_text())["games"]}
+
+
 def match(game: dict, cands: list[dict]) -> tuple[dict | None, str]:
     moves = game["moves_san"]
     amb = game.get("ambiguous_plies", ())
+    # A game where the narrator's account played the other colour can't be
+    # the one on screen (the board's orientation - `pov` - has been right on
+    # every matched game). Confirmed: a Sensei speedrun game (SenseiDanya,
+    # White) matched a game from his main account where he was Black - same
+    # King's Indian Samisch for 16 plies - and a right move was counted as a
+    # wrong trusted one.
+    if game.get("pov") and game.get("channel"):
+        cands = [c for c in cands if narrator_side(game["channel"], c) in (None, game["pov"])]
+    # matches checked by hand and found to be a different game (fixtures/false_matches.json)
+    nots = _FALSE_MATCHES.get((game.get("video_id"), round(game.get("start_seconds") or -1)), set())
+    if "*" in nots:
+        return None, "checked by hand: its real game isn't in the archives"
+    if nots:
+        cands = [c for c in cands if c.get("source") not in nots]
     scored = sorted(((_prefix(moves, c["moves_san"], amb), c.get("linked", False), c) for c in cands),
                     key=lambda t: (t[0], t[1]), reverse=True)
     if not scored:
