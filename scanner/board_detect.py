@@ -148,6 +148,9 @@ def _refine_grid(gray: np.ndarray, box: Box) -> Box:
     )
 
 
+EDGE_PAD = 0.04   # share of the frame height the board may run past each edge
+
+
 def detect_in_frame(frame_bgr: np.ndarray, work_height: int = 480) -> Box:
     h0, w0 = frame_bgr.shape[:2]
     scale = work_height / h0
@@ -155,6 +158,23 @@ def detect_in_frame(frame_bgr: np.ndarray, work_height: int = 480) -> Box:
     gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (3, 3), 0)
 
     box = _refine_grid(gray, _coarse(gray))
+    # The board may be a little bigger than the frame (Naroditsky's Sensei
+    # speedruns: the top and bottom ranks and the h-file clipped by a few
+    # pixels). Searching only boxes inside the frame put it 24 px low, or
+    # squashed it (723x717), and no opening position was ever read. Where
+    # the box touches the frame's edge or isn't square, search again with
+    # the frame padded by its own edge pixels (they carry the clipped
+    # squares' colours on), letting the box run past the edge, and keep the
+    # better fit. Boards well inside the frame are left as they were.
+    pad = int(round(EDGE_PAD * work_height))
+    gh, gw = gray.shape
+    edge = 3
+    if pad and (box.x <= edge or box.y <= edge or box.x + box.w >= gw - edge or box.y + box.h >= gh - edge
+                or abs(box.w - box.h) > 2):
+        padded = cv2.copyMakeBorder(gray, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
+        alt = _refine_grid(padded, _coarse(padded))
+        if alt.score > box.score:
+            box = Box(alt.x - pad, alt.y - pad, alt.w, alt.h, alt.score)
     inv = 1.0 / scale
     return Box(int(round(box.x * inv)), int(round(box.y * inv)),
               int(round(box.w * inv)), int(round(box.h * inv)), box.score)

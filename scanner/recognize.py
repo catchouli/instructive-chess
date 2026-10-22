@@ -54,17 +54,25 @@ class Reading:
 def _cells(frame_bgr: np.ndarray, box):
     """Yield (rank_row, file_col, cell_bgr) with a small inset applied."""
     x, y, w, h = box.as_tuple() if hasattr(box, "as_tuple") else box
+    # A board a little bigger than the frame (Naroditsky's Sensei speedruns:
+    # the edge ranks and the h-file clipped by a few pixels) is read from the
+    # frame padded with its own edge pixels, so a clipped square keeps its
+    # full size instead of being stretched (and can't wrap round via a
+    # negative index).
+    fh, fw = frame_bgr.shape[:2]
+    pad = max(0, -x, -y, x + w - fw, y + h - fh)
+    if pad:
+        pad = int(np.ceil(pad)) + 1
+        frame_bgr = cv2.copyMakeBorder(frame_bgr, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
+        x, y = x + pad, y + pad
     xe = np.linspace(x, x + w, 9)
     ye = np.linspace(y, y + h, 9)
     ix = (w / 8) * _INSET
     iy = (h / 8) * _INSET
     for r in range(8):
         for c in range(8):
-            # a board clipped by the frame edge (seen on a stream whose board
-            # sat a few pixels above the top) must not wrap around via a
-            # negative index
-            y0, y1 = max(0, int(ye[r] + iy)), max(0, int(ye[r + 1] - iy))
-            x0, x1 = max(0, int(xe[c] + ix)), max(0, int(xe[c + 1] - ix))
+            y0, y1 = int(ye[r] + iy), int(ye[r + 1] - iy)
+            x0, x1 = int(xe[c] + ix), int(xe[c + 1] - ix)
             yield r, c, frame_bgr[y0:y1, x0:x1]
 
 
