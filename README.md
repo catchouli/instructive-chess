@@ -174,6 +174,12 @@ against its real game and the readings around the first wrong move.
 The code is MIT licensed (see `LICENSE`). The licence covers the code only: not the videos,
 and not anything taken from them.
 
+The web page includes two GPL-3.0 components, copied unmodified into `web/vendor/` with their
+own licence files: [chessground](https://github.com/lichess-org/chessground) (the search
+board) and [Stockfish.js](https://github.com/nmrugg/stockfish.js) (the optional engine, the
+lite single-threaded build of [Stockfish](https://stockfishchess.org)). The project's own files
+stay MIT; the page as a whole is distributed under the GPL's terms, with all its source here.
+
 The catalog in `web/data/games.json` is the one piece of scanned data in the repo. It is a
 set of factual records about other people's videos: the moves, clocks and ratings of each
 game, with the video's title, channel and a link back to it.

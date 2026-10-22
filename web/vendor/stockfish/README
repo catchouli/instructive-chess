@@ -1,0 +1,2 @@
+Stockfish.js 19.0.1 (https://github.com/nmrugg/stockfish.js), the "lite, single-threaded" WASM build of Stockfish (https://stockfishchess.org), GPL-3.0 - see LICENSE.txt.
+Files copied unmodified from the npm package: bin/stockfish-19-lite-single.{js,wasm}.

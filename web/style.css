@@ -163,3 +163,31 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
 
 footer { color: var(--text-dim); font-size: 12px; padding: 40px 20px 60px; }
 .empty { padding: 40px 0; text-align: center; color: var(--text-dim); }
+
+/* the search board */
+.search-board { margin: 0 0 10px; }
+.search-board > summary { cursor: pointer; color: var(--text-dim); font-size: 13px; margin: 0 2px 8px; }
+.sb-grid { display: grid; grid-template-columns: 320px 1fr; gap: 18px; align-items: start; }
+@media (max-width: 560px) { .sb-grid { grid-template-columns: 1fr; } }
+.sboard { width: 320px; height: 320px; max-width: 100%; }
+.sb-side { font-size: 13px; color: var(--text-dim); }
+.sb-buttons { display: flex; gap: 8px; margin-bottom: 10px; }
+.sb-buttons button, .sb-next button {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 13px;
+}
+.sb-side label.check { display: inline-flex; align-items: center; gap: 8px; }
+.sb-side input[type=checkbox] { accent-color: var(--accent); }
+.sb-hint { margin: 8px 0; }
+.sb-next { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.sb-next button { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; min-width: 64px; text-align: left; }
+
+/* the engine panel, beside the game's board */
+.engine { font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }
+.engine label.check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.engine input[type=checkbox] { accent-color: var(--accent); }
+.engine .dim, .engine-out .dim { color: var(--text-dim); }
+.engine-out { margin-top: 6px; background: var(--surface-2); border-radius: 8px; padding: 8px 12px; }
+.engine-out[hidden] { display: none; }
+.engine-out .score { font-weight: 600; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.engine-out .pv { margin-top: 4px; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
