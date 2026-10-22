@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Instructive Chess</title>
-<link rel="stylesheet" href="vendor/chessground/chessground.base.css">
-<link rel="stylesheet" href="vendor/chessground/chessground.brown.css">
-<link rel="stylesheet" href="vendor/chessground/chessground.cburnett.css">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="vendor/chessground/chessground.base.css?v=5ba7d4ee9e">
+<link rel="stylesheet" href="vendor/chessground/chessground.brown.css?v=f1da7120d2">
+<link rel="stylesheet" href="vendor/chessground/chessground.cburnett.css?v=f3b56e56e4">
+<link rel="stylesheet" href="style.css?v=247061185a">
 </head>
 <body>
 <header>
@@ -64,6 +64,16 @@
      side they played is read from the board's orientation.</p>
 </footer>
 
-<script type="module" src="app.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "./lib.js": "./lib.js?v=598314b024",
+    "./engine.js": "./engine.js?v=419b2a9f0f",
+    "./vendor/chess.js": "./vendor/chess.js?v=d37d269104",
+    "./vendor/chessground/chessground.min.js": "./vendor/chessground/chessground.min.js?v=6fd46cef15"
+  }
+}
+</script>
+<script type="module" src="app.js?v=c8df6970b6"></script>
 </body>
 </html>

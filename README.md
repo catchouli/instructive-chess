@@ -157,7 +157,8 @@ that stays put.
 
 ```sh
 scanner/.venv/bin/python -m pytest scanner/tests/   # scanner: move reconstruction
-node web/lib.test.mjs                               # web: query parsing + matching
+node web/lib.test.mjs                               # web: query parsing + matching, version stamps
+node web/stamp.mjs                                  # after editing any web file: re-stamp index.html
 scanner/.venv/bin/python scanner/tests/benchmark.py # accuracy of the whole catalog vs the real games
 ```
 

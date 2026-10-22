@@ -181,3 +181,12 @@ t('trustedView: nothing trusted hides the game; no field shows it all', () => {
 });
 
 console.log(`\n${pass} tests passed`);
+
+// index.html's version stamps must match the files (node web/stamp.mjs)
+{
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('./stamp.mjs', import.meta.url)), '--check'], { encoding: 'utf8' });
+  if (r.status !== 0) { console.error('FAIL index.html version stamps are stale: run node web/stamp.mjs'); process.exit(1); }
+  console.log('ok  index.html version stamps match the files');
+}
