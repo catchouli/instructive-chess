@@ -147,6 +147,12 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
   background: var(--surface-2); border-radius: 8px; padding: 10px 12px;
   white-space: pre-wrap; word-break: break-word;
 }
+.pgn .ply {
+  font: inherit; color: inherit; background: none; border: 0; padding: 0 2px; margin: 0;
+  border-radius: 4px; cursor: pointer;
+}
+.pgn .ply:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.pgn .ply.current { background: var(--accent); color: var(--accent-text); }
 .detail-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .detail-actions a, .detail-actions button {
   font-size: 13px; text-decoration: none;

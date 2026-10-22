@@ -163,10 +163,14 @@ function detail(g) {
   board.className = 'board';
   const nav = document.createElement('div');
   nav.className = 'nav';
+  const first = button('«');
+  first.title = 'start of the game';
   const prev = button('‹ prev');
   const next = button('next ›');
+  const last = button('»');
+  last.title = 'end of the game';
   const label = document.createElement('span');
-  nav.append(prev, next, label);
+  nav.append(first, prev, next, last, label);
   const moveWatch = document.createElement('a');
   moveWatch.className = 'move-watch';
   moveWatch.target = '_blank';
@@ -197,8 +201,9 @@ function detail(g) {
   const draw = () => {
     board.innerHTML = boardSvg(positions[ply]);
     label.textContent = ply === 0 ? 'start position' : `after ${moveLabel(g.moves_san, ply)}`;
-    prev.disabled = ply === 0;
-    next.disabled = ply === g.moves_san.length;
+    first.disabled = prev.disabled = ply === 0;
+    next.disabled = last.disabled = ply === g.moves_san.length;
+    for (const el of pgn.querySelectorAll('.ply')) el.classList.toggle('current', Number(el.dataset.ply) === ply);
     if (hasTimes) {
       const t = ply === 0 ? g.start_seconds : g.move_seconds[ply - 1];
       moveWatch.href = withTimestamp(g.video_url, t);
@@ -219,15 +224,23 @@ function detail(g) {
       clockLabel.hidden = true;
     }
   };
-  prev.onclick = () => { ply = Math.max(0, ply - 1); draw(); };
-  next.onclick = () => { ply = Math.min(g.moves_san.length, ply + 1); draw(); };
-  draw();
+  const go = (p) => { ply = Math.max(0, Math.min(g.moves_san.length, p)); draw(); };
+  first.onclick = () => go(0);
+  prev.onclick = () => go(ply - 1);
+  next.onclick = () => go(ply + 1);
+  last.onclick = () => go(g.moves_san.length);
 
-  // pgn + actions
+  // pgn (each move jumps the board to the position after it) + actions
   const info = document.createElement('div');
   const pgn = document.createElement('div');
   pgn.className = 'pgn';
-  pgn.textContent = toPgn(g.moves_san);
+  pgn.innerHTML = g.moves_san.map((san, i) =>
+    `${i % 2 === 0 ? `${i / 2 + 1}. ` : ''}<button type="button" class="ply" data-ply="${i + 1}">${escapeHtml(san)}</button>`).join(' ');
+  pgn.addEventListener('click', (e) => {
+    const el = e.target.closest('.ply');
+    if (el) go(Number(el.dataset.ply));
+  });
+  draw();
 
   const actions = document.createElement('div');
   actions.className = 'detail-actions';
