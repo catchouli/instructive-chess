@@ -7,6 +7,25 @@ import { Chess } from './vendor/chess.js';
 import { Chessground } from './vendor/chessground/chessground.min.js';
 import { analyse, fmtScore, DEPTH } from './engine.js';
 
+// Light/dark switch: the page follows the system until it's used, then
+// keeps the choice (the inline script in index.html applies it before paint).
+const themeSwitch = document.getElementById('theme-switch');
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const isDark = () => (document.documentElement.dataset.theme || (darkQuery.matches ? 'dark' : 'light')) === 'dark';
+function showThemeSwitch() {
+  const dark = isDark();
+  themeSwitch.textContent = dark ? '\u2600' : '\u263E';
+  themeSwitch.title = themeSwitch.ariaLabel = dark ? 'Light mode' : 'Dark mode';
+}
+themeSwitch.addEventListener('click', () => {
+  const theme = isDark() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem('theme', theme); } catch (e) { /* private window: this visit only */ }
+  showThemeSwitch();
+});
+darkQuery.addEventListener('change', showThemeSwitch);
+showThemeSwitch();
+
 const DEFAULT_LIMIT = 20;   // games shown when the search box is empty
 const RESULT_LIMIT = 50;    // cap on a filtered result set
 

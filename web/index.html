@@ -3,15 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <title>Instructive Chess</title>
 <link rel="stylesheet" href="vendor/chessground/chessground.base.css?v=5ba7d4ee9e">
 <link rel="stylesheet" href="vendor/chessground/chessground.brown.css?v=f1da7120d2">
 <link rel="stylesheet" href="vendor/chessground/chessground.cburnett.css?v=f3b56e56e4">
-<link rel="stylesheet" href="style.css?v=247061185a">
+<link rel="stylesheet" href="style.css?v=dbeda7f52d">
 </head>
 <body>
 <header>
   <h1>Instructive Chess</h1>
+  <button id="theme-switch" class="theme-switch" type="button"></button>
   <p class="tagline">Master games from YouTube, narrated move by move &mdash; search by the moves played.</p>
 </header>
 
@@ -74,6 +76,6 @@
   }
 }
 </script>
-<script type="module" src="app.js?v=c8df6970b6"></script>
+<script type="module" src="app.js?v=96736a2d15"></script>
 </body>
 </html>
