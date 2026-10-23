@@ -343,3 +343,10 @@ Weak spots:
 
 Next: re-run `distill.py` with the full archive, and the channel pilot (Banzea, chessbrah,
 Chessexplained, ChessDojo) for the openings Naroditsky plays less.
+
+Later, in the web app (Cat, 2026-10-23): bake the assistant's output offline into a file the
+page loads, and show it below the search board for the position on it: what the masters said
+about this position and its moves, each point cited to its game, narrator and video moment,
+so clicking through the database's next moves also walks through the commentary. Only the
+model's paraphrased ideas and the links would be published. No transcript text: the evidence
+quotes stay local (see Copyright and sources).
