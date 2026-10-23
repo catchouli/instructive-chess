@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -175,6 +176,23 @@ def _found(quote: list[str], words: list[str], lo: int, hi: int) -> bool:
     return False
 
 
+# a sentence end glued to more text, a "|" or a new line: the model running on
+# after the idea (traced: "...counterplay.Topics placeholder.", "...on b4.Hmm.Hmm",
+# "...attack.is the plan stated here", the same idea a hundred times joined by "|")
+_RUN_ON = re.compile(r"(\S*?)[.!?](?=[^\s\d.!?])|[|\n]")
+
+
+def first_sentence(idea: str) -> str:
+    """*idea* up to where the model ran on. A move number (12.Rb1, 3...Nf6)
+    is not a sentence end."""
+    for m in _RUN_ON.finditer(idea):
+        if m.group(0) in "|\n":
+            return idea[:m.start()].strip()
+        if m.group(1) and not m.group(1).isdigit() and not m.group(1).endswith("."):
+            return idea[:m.end()].strip()
+    return idea
+
+
 def checked(label: dict, said: str, before: str = "", after: str = "") -> dict:
     """The label's fields, with `evidence_ok`: is the quoted evidence really in
     what was said? An idea without it may be the model's own (traced: an attack
@@ -184,9 +202,11 @@ def checked(label: dict, said: str, before: str = "", after: str = "") -> dict:
     out = {k: label[k] for k in ("kind", "evidence", "topics", "idea") if k in label}
     if out.get("idea"):
         # the model sometimes runs on past the sentence (traced: "...cause.',", "...tempo.Q")
-        idea = out["idea"].strip()
+        idea = first_sentence(out["idea"].strip())
         end = max(idea.rfind(c) for c in ".!?")
         out["idea"] = idea[:end + 1] if end > 0 else idea.rstrip("'\",\\ ")
+        if len(out["idea"].split()) < 3:     # nothing left but filler (traced: "x", "placeholder")
+            del out["idea"]
     if out.get("kind") == "instructive":
         quote = _norm(out.get("evidence", "")).split()
         b, m, a = _norm(before).split(), _norm(said).split(), _norm(after).split()

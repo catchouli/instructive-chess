@@ -350,3 +350,32 @@ about this position and its moves, each point cited to its game, narrator and vi
 so clicking through the database's next moves also walks through the commentary. Only the
 model's paraphrased ideas and the links would be published. No transcript text: the evidence
 quotes stay local (see Copyright and sources).
+
+### 2026-10-23: advice is its own kind of idea (`assistant/tag.py`)
+
+Reviewing the Alapin guide, Cat noticed that opening recommendations are a different kind of
+information from ideas about the line itself, and that they belong where the choice is made.
+Naroditsky's advice to play "the Grand Prix Attack or the c3 Sicilian" against the Sicilian
+is a choice between 2.Nc3 (then 3.f4) and 2.c3, so it belongs after 1.e4 c5, not after 2.c3.
+
+`tag.py` makes a second, cheap pass over the labelled ideas, not the transcripts. For each
+idea, Haiku 5.5 decides whether it is advice on which opening or line to adopt, and if so,
+which move of the line it is about choosing and what it recommends there. The idea is then
+placed at the position before that move. `distill.py` gathers the advice into its own
+section, "What the masters recommend".
+
+- Alapin, 249 ideas: 16 are advice. Two runs agreed on 15 of the 16. Each run cost about
+  60k input and 18k output tokens.
+- The first prompt counted anything with "should" in it ("Black should not trade pieces in
+  this IQP position") as advice. Advice is now limited to choosing an opening or line, and
+  the model runs at medium effort rather than low.
+- The ideas that looked like false advice were right when checked against the words they
+  came from: "I like to play this line especially in blitz" is a repertoire choice, although
+  the classifier's idea had reduced it to "Black plays the unorthodox ...b6 line".
+
+The same review found that about 7% of the classifier's ideas ran on after the first sentence
+("...counterplay.Topics placeholder.", "...on b4.Hmm.Hmm.Hmm", one idea repeated more than a
+hundred times joined by "|"). `classify.first_sentence` now cuts an idea at the first glued
+sentence end, "|" or new line (a move number such as 12.Rb1 is not a sentence end). It was
+applied to the existing labels: 1,611 ideas trimmed, and 26 that were only filler ("x",
+"placeholder") dropped.

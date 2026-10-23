@@ -26,6 +26,7 @@ import positions
 
 CACHE = positions.ROOT / "assistant" / "cache"
 OUT_DIR = CACHE / "summaries"
+TAGS = CACHE / "tags.json"
 MAX_PLY = 30
 
 OPENINGS = {
@@ -41,6 +42,7 @@ Write in Markdown:
 - Sections with "## " headings that fit the material, for example: the main plans for each side, typical pawn structures, key moves and move orders, traps and tactics, common mistakes. Skip a section the ideas don't support.
 - Short bullet points. Every bullet ends with the ids of the ideas it rests on, like [12] or [3, 41]. Merge ideas that say the same thing and cite them all: agreement between several players is worth showing. Where players disagree, say so.
 - Use correct SAN notation, and name the position a point applies to (e.g. "after 3.Bf4 c5").
+- Ideas marked ADVICE recommend which opening or line to play, rather than explaining the position. Put them in their own section, "## What the masters recommend", each at the position where the choice is made (given with the idea), naming the options. Keep them out of the other sections.
 - Add nothing that isn't in the ideas, even if you know it to be true. Leave out ideas that only make sense in one specific game.
 - About 300-600 words."""
 
@@ -51,22 +53,28 @@ def _matches(moves: list[str], prefixes: list[list[str]]) -> bool:
 
 def gather(prefixes: list[list[str]]) -> list[dict]:
     games = {g["id"]: g for g in json.loads(positions.CATALOG.read_text())}
+    tags = json.loads(TAGS.read_text()) if TAGS.exists() else {}     # tag.py: which ideas are advice
     ideas = []
     for f in sorted(glob.glob(str(CACHE / "labels" / "*.json"))):
         for u in json.loads(open(f).read())["units"]:
             lab = u.get("label") or {}
             g = games.get(u["game_id"])
-            if not (g and lab.get("kind") == "instructive" and lab.get("evidence_ok") and u["trusted"]
-                    and u["ply"] <= MAX_PLY and _matches(g["moves_san"], prefixes)):
+            if not (g and lab.get("kind") == "instructive" and lab.get("evidence_ok") and lab.get("idea")
+                    and u["trusted"] and u["ply"] <= MAX_PLY and _matches(g["moves_san"], prefixes)):
                 continue
             ideas.append({"id": len(ideas) + 1, "by": u["channel"], "moves": u["recent"] or "(start)",
                           "idea": lab["idea"], "video_id": u["video_id"], "start": u["start"],
                           "title": g.get("video_title", "")})
+            tag = tags.get(u["id"]) or {}
+            if tag.get("advice"):
+                ideas[-1]["advice_at"] = positions.line_san(g["moves_san"][:tag["at_ply"]]) or "the start"
     return ideas
 
 
 def distil(client, model: str, name: str, ideas: list[dict]) -> tuple[str, dict]:
-    listing = "\n".join(f"[{i['id']}] ({i['by']}; after {i['moves']}) {i['idea']}" for i in ideas)
+    listing = "\n".join(f"[{i['id']}] ({i['by']}; ADVICE, the choice after {i['advice_at']}) {i['idea']}"
+                        if "advice_at" in i else f"[{i['id']}] ({i['by']}; after {i['moves']}) {i['idea']}"
+                        for i in ideas)
     res = client.messages.create(
         model=model, max_tokens=4000, system=PROMPT,
         messages=[{"role": "user", "content": f"Opening: {name}\n\nIdeas:\n{listing}"}],
@@ -142,11 +150,14 @@ def main(argv: list[str] | None = None) -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     body = []
     for name, prefixes in OPENINGS.items():
+        slug = re.sub(r"\W+", "_", name).strip("_").lower()
         if args.only and args.only.lower() not in name.lower():
+            if (OUT_DIR / f"{slug}.json").exists():   # keep its last guide on the page
+                old = json.loads((OUT_DIR / f"{slug}.json").read_text())
+                body.append(to_html(old["guide"], old["ideas"]) + f'<p class="meta">From {len(old["ideas"])} ideas.</p>')
             continue
         ideas = gather(prefixes)
         md, usage = distil(client, args.model, name, ideas)
-        slug = re.sub(r"\W+", "_", name).strip("_").lower()
         (OUT_DIR / f"{slug}.json").write_text(json.dumps({"name": name, "model": args.model, "usage": usage,
                                                           "ideas": ideas, "guide": md}, ensure_ascii=False, indent=1))
         by = {}
