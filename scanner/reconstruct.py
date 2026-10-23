@@ -39,6 +39,8 @@ FUZZY_CONFIRM_S = 2.0  # a fuzzy bunch's position read exactly this long confirm
 UNREACH_BUNCH = 0.0  # a bunch accepted right after an unexplainable reading a square off ends trust (0 = off)
 RETRACT_ENDS_TRUST = 1.0  # moves accepted right after an undo or detour end trust (0 = off)
 RETRACT_BROWSE = False    # ...and after browsing back (3 -> 1 leaks either way for 2.5x the cost)
+BRIEF_UNDO_NEAR = 3       # ...but one ply shown briefly and taken back only within this many plies of an
+                          # unexplainable reading a square off (0 = always): see EXPERIMENTS.md
 HIDDEN_KING = 1.0  # a missing king: try castling, and moves by its side are guesses (0 = off)
 RECOVER = 1.0          # readings stopped following: re-explain them from a few plies back (0 = off,
                        # 1 = not for a reading with several routes from here, 2 = for those too)
@@ -806,10 +808,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
     undone_from: int | None = None  # ply count the board just reverted to (see the undo check)
     after_retract = False          # an undo / browse back / detour since the last accepted ply
     after_unreach1 = False         # an unexplainable reading a square off since the last accepted ply
+    unreach1_ply = None            # ...and the ply count at the last one (see BRIEF_UNDO_NEAR)
     last_retract = -1e9            # when the board last went back (undo, browsing, detour): see RECOVER
 
     def close(why: str = ""):
-        nonlocal current, board, history, browsing, skipped, undone_from, pending_fuzzy, pending_seen, after_retract, after_unreach1
+        nonlocal current, board, history, browsing, skipped, undone_from, pending_fuzzy, pending_seen, after_retract, after_unreach1, unreach1_ply
         if current:
             note(last_ts, f"close {why}: {current.ply} plies, {current.skipped} skipped")
         if current and current.ply >= 2:
@@ -818,6 +821,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
         history, browsing, skipped, undone_from = [], False, [], None
         pending_fuzzy, pending_seen = [], 0.0
         after_retract = after_unreach1 = False
+        unreach1_ply = None
 
     def retract_to(k: int) -> None:
         nonlocal board
@@ -986,8 +990,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 # premove (traced: "Rf4" shown for two seconds, then the
                 # board sat on the old position for ten). Not browsing.
                 note(ts, f"undo: ply {current.ply} {current.moves_san[-1]} shown briefly, taken back")
+                # Naroditsky drags pieces to show ideas while explaining:
+                # such an undo ends trust only near a reading a square off
+                near = unreach1_ply is not None and current.ply - unreach1_ply <= BRIEF_UNDO_NEAR
                 retract_to(n - 1)
-                after_retract = True
+                after_retract = after_retract or not BRIEF_UNDO_NEAR or near
                 last_retract = ts
                 misses = 0
                 continue
@@ -1156,6 +1163,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
             note(ts, f"skip ({info}; {_hamming(cur_placement, target)} squares off) miss {misses}")
             if info == "unreachable" and _hamming(cur_placement, target) == 1:
                 after_unreach1 = True
+                unreach1_ply = current.ply
             if RECOVER and misses <= 3 and _hamming(cur_placement, target) >= RECOVER_MIN_DIFF \
                     and (RECOVER >= 2 or info not in ("ambiguous", "fuzzy-ambiguous")) \
                     and ts - last_retract > RECOVER_QUIET_S and not (RECOVER_STRICT and repaired is not None):
