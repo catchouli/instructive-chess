@@ -205,6 +205,7 @@ mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: in
 .detail-actions a.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
 
 footer { color: var(--text-dim); font-size: 12px; padding: 40px 20px 60px; }
+footer a { color: var(--accent); }
 .empty { padding: 40px 0; text-align: center; color: var(--text-dim); }
 
 /* the search board */
