@@ -304,3 +304,42 @@ Next:
    it), and measure the instructive share by ply, narrator, and stream versus recorded video.
 2. Group the `idea`s by opening and pawn structure, and draft London and Sicilian summaries
    with citations for Cat to judge (Sonnet 5.5 reading the instructive units again).
+
+### 2026-10-23: the Naroditsky speedrun archive
+
+Every speedrun video on Naroditsky's channel has been scanned (388 videos, in seven batches,
+2026-10-21 to 2026-10-23), merged into the catalog only when the benchmark found no wrong
+trusted move, and its commentary labelled with prompt v3. With his streams and other videos
+the channel now gives 615 games from 316 videos, 309 of them listed (12+ trusted plies).
+
+| Series | Videos | With games | Games | Listed | Matched (every move right) | Instructive (opening / middlegame / late) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Original rating speedrun | 167 | 140 | 266 | 164 | 219 (186) | 50% (43% / 57% / 42%) |
+| Sensei speedrun | 118 | 82 | 106 | 49 | 83 (67) | 51% (43% / 61% / 44%) |
+| Theory speedrun | 42 | 35 | 60 | 27 | 34 (29) | 55% (47% / 65% / 49%) |
+| Develop Your Instincts | 40 | 36 | 95 | 25 | 17 (12) | 54% (48% / 64% / 39%) |
+| Beginner to Master | 21 | 15 | 29 | 13 | 21 (16) | 55% (47% / 65% / 47%) |
+| Streams and other videos | 8 | 8 | 59 | 31 | 53 (45) | 10% (4% / 14% / 8%) |
+
+(Matched: games found in the real game archives of his accounts SenseiDanya, OhMyLands,
+danielnaroditsky and FrankfurtAirport. Instructive: share of labelled units with their
+evidence found in the transcript; opening is up to ply 16, middlegame up to ply 50.)
+
+Every speedrun series is about half instructive, and the opening share holds at 43-48%
+across them: the result from the first 58 videos (2026-10-22) holds on six times as many.
+Openings in the speedrun games with a trusted first move (454): 1.e4 e5 116, 1.e4 c5 112,
+1.d4 Nf6 50, 1.d4 d5 31, 1.e4 c6 30, 1.e4 d5 and 1.e4 e6 18 each, 1.e4 g6 15. He plays
+White in 305 games and Black in 246.
+
+Weak spots:
+- Sensei and DYI games are listed least often (46% and 26% of their games). The DYI games
+  rarely match a real game (17 of 95), so trust can't be checked against the archives
+  there; the account used for those videos is still to be found.
+- Speedrun videos with no games: of seven, five now give games (two boards in one video:
+  the speedrun on one, his old tournament games in a database on the other; and a
+  full-height blue board at 720p that never calibrated; see scanner/EXPERIMENTS.md). Left:
+  a Puzzle Rush video (no games to find) and one full-height-board video. That layout
+  still reads poorly once calibrated (one game from a video with several).
+
+Next: re-run `distill.py` with the full archive, and the channel pilot (Banzea, chessbrah,
+Chessexplained, ChessDojo) for the openings Naroditsky plays less.

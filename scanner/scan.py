@@ -461,7 +461,8 @@ def main(argv: list[str]) -> int:
         x, y, w, h = (int(v) for v in args.crop.split(","))
         box = board_detect.Box(x, y, w, h, score=1.0)
     else:
-        box = board_detect.detect(sample_frames(src.path, args.start, args.end, 15))
+        other_boxes: list[board_detect.Box] = []
+        box = board_detect.detect(sample_frames(src.path, args.start, args.end, 15), others=other_boxes)
         if box is None:
             print("      board not found - try --crop x,y,w,h or --calibrate", file=sys.stderr)
             return 2
@@ -493,7 +494,16 @@ def main(argv: list[str]) -> int:
         box = board_detect.Box(*data["box"], score=1.0)
     else:
         print(f"[3/6] scanning frames @ {args.fps} fps")
-        model, box, readings = read_frames(iter_frames(src.path, args.fps, args.start, args.end), box, log=print)
+        model, box_read, readings = read_frames(iter_frames(src.path, args.fps, args.start, args.end), box, log=print)
+        if model is None and not args.crop:
+            # the most-voted board never showed an opening position: try
+            # the video's other boards (see board_detect.detect)
+            for alt in other_boxes[:2]:
+                print(f"      no opening position there; trying the board at x={alt.x} y={alt.y} {alt.w}x{alt.h}")
+                model, box_read, readings = read_frames(iter_frames(src.path, args.fps, args.start, args.end), alt, log=print)
+                if model is not None:
+                    break
+        box = box_read
     if model is None:
         print("      never saw an opening position - no games recorded", file=sys.stderr)
         return 3

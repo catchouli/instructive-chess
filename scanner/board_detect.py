@@ -180,7 +180,8 @@ def detect_in_frame(frame_bgr: np.ndarray, work_height: int = 480) -> Box:
               int(round(box.w * inv)), int(round(box.h * inv)), box.score)
 
 
-def detect(frames: list[np.ndarray], min_score: float = 0.03, cluster_tol: int = 20) -> Box | None:
+def detect(frames: list[np.ndarray], min_score: float = 0.03, cluster_tol: int = 20,
+           others: list[Box] | None = None) -> Box | None:
     """Detect the board box from several sample frames.
 
     Some board themes (e.g. flat, low-contrast grey/white squares) score below
@@ -192,6 +193,12 @@ def detect(frames: list[np.ndarray], min_score: float = 0.03, cluster_tol: int =
     roughly agree with each other and trust whichever group has the most
     votes; `min_score` is now just a floor to reject a frame set with no
     plausible board at all, not the primary filter.
+
+    *others*, if given, receives the other groups with 2+ votes, most votes
+    first: a video can show two boards (Naroditsky's Sensei speedruns: the
+    online games on one board, then his own old games in a database on
+    another, for longer), and scan.py tries them when the first never shows
+    an opening position.
     """
     hits = [detect_in_frame(f) for f in frames]
     hits = [b for b in hits if b.score >= min_score]
@@ -209,12 +216,18 @@ def detect(frames: list[np.ndarray], min_score: float = 0.03, cluster_tol: int =
         else:
             clusters.append([b])
     best = max(clusters, key=len)
+    if others is not None:
+        others.extend(_median_box(c) for c in sorted(clusters, key=len, reverse=True)
+                      if c is not best and len(c) >= 2)
+    return _median_box(best)
 
+
+def _median_box(cluster: list[Box]) -> Box:
     med = lambda vs: int(np.median(vs))  # noqa: E731
     return Box(
-        med([b.x for b in best]), med([b.y for b in best]),
-        med([b.w for b in best]), med([b.h for b in best]),
-        float(np.mean([b.score for b in best])),
+        med([b.x for b in cluster]), med([b.y for b in cluster]),
+        med([b.w for b in cluster]), med([b.h for b in cluster]),
+        float(np.mean([b.score for b in cluster])),
     )
 
 

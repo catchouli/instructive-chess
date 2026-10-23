@@ -191,8 +191,12 @@ def looks_like_start(occ: np.ndarray) -> bool:
     # real video). This is only a cheap filter to decide whether a full
     # calibration attempt is worth trying at all - calibrate_from_start's own
     # tolerance check is the real gate, so erring generous here just costs a
-    # few wasted calibration attempts, not accuracy.
-    return full >= 29 and empty <= 10
+    # few wasted calibration attempts, not accuracy. 10 -> 16: Naroditsky's
+    # big blue chess.com board at 720p reads 11-13 of the empty squares as
+    # occupied (CLAHE stretches the flat squares' compression noise), and
+    # three speedruns never calibrated although every start frame passed
+    # calibrate_from_start.
+    return full >= 29 and empty <= 16
 
 
 def _piece_is_light(cell_bgr: np.ndarray) -> float:
