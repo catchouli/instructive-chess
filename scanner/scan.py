@@ -531,9 +531,12 @@ def main(argv: list[str]) -> int:
     if not args.from_readings and not args.start and not args.end and download._looks_like_url(src.url):
         # keep the raw readings: reconstruction can then be re-run or traced
         # (tests/trace_video.py) without reading the frames again
-        (download.CACHE / f"{src.video_id}-readings.json").write_text(
-            json.dumps({"box": box.as_tuple(), "fps": args.fps, "tune_grid": recognize.TUNE_GRID,
-                        "readings": readings}))
+        # temp file + rename, so an interrupted write can't leave a cut-off cache
+        cached = download.CACHE / f"{src.video_id}-readings.json"
+        tmp = cached.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"box": box.as_tuple(), "fps": args.fps, "tune_grid": recognize.TUNE_GRID,
+                                   "readings": readings}))
+        os.replace(tmp, cached)
     print(f"      {len(readings)} frames, {sum(1 for _, p in readings if p)} with a readable board")
 
     print("[4/6] reconstructing games")

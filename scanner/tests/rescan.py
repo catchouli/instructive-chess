@@ -10,10 +10,16 @@ Each video is scanned by its own scan.py process into its own scratch file
 (scan.py's catalog write is a read-modify-write of one file, so parallel
 scans can't share one), then everything is merged into --out. Videos not
 rescanned keep their existing entries. Logs go next to --out.
+
+Resumable: a video that finished gets a .done marker holding a fingerprint
+of the scanner code, and a rerun with the same --out skips it while the code
+is unchanged. Stop it any time and run the same command again; --fresh
+rescans everything.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -31,12 +37,22 @@ PYTHON = ROOT / "scanner" / ".venv" / "bin" / "python"
 SCAN = ROOT / "scanner" / "scan.py"
 
 
+def code_stamp() -> str:
+    """Fingerprint of the scanner's code, so a resumed run never mixes in
+    videos scanned by different code."""
+    h = hashlib.sha256()
+    for f in sorted((ROOT / "scanner").glob("*.py")):
+        h.update(f.name.encode() + f.read_bytes())
+    return h.hexdigest()[:16]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("video_ids", nargs="*", help="video IDs or URLs (new videos welcome); default: every video in the catalog")
     ap.add_argument("--out", type=Path, required=True, help="merged catalog to write")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--from-readings", action="store_true", help="pass --from-readings to scan.py (see there)")
+    ap.add_argument("--fresh", action="store_true", help="rescan videos a previous run already finished")
     args = ap.parse_args(argv)
 
     games = json.loads(CATALOG.read_text())
@@ -51,6 +67,15 @@ def main(argv: list[str] | None = None) -> int:
         vids.append(vid)
     work = args.out.parent / (args.out.stem + "_parts")
     work.mkdir(parents=True, exist_ok=True)
+    stamp = f"{code_stamp()} {'readings' if args.from_readings else 'frames'}"
+
+    def finished(vid: str) -> bool:
+        done = work / f"{vid}.done"
+        return not args.fresh and done.exists() and done.read_text().strip() == stamp
+
+    skipped = [v for v in vids if finished(v)]
+    if skipped:
+        print(f"{len(skipped)} videos already done by this code, skipping them", flush=True)
 
     def scan_one(vid: str) -> tuple[str, int]:
         part = work / f"{vid}.json"
@@ -60,16 +85,18 @@ def main(argv: list[str] | None = None) -> int:
             extra = ["--from-readings"] if args.from_readings else []
             code = subprocess.call([str(PYTHON), "-u", str(SCAN), urls[vid], "--catalog", str(part), *extra],
                                    stdout=log, stderr=subprocess.STDOUT)
+        if code == 0:
+            (work / f"{vid}.done").write_text(stamp + "\n")
         return vid, code
 
     failed = []
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-        futures = [pool.submit(scan_one, v) for v in vids]
+        futures = [pool.submit(scan_one, v) for v in vids if v not in skipped]
         for i, fut in enumerate(as_completed(futures), 1):
             vid, code = fut.result()
             if code != 0:
                 failed.append(vid)
-            print(f"[{i}/{len(vids)}] {vid}: {'ok' if code == 0 else f'exit {code}'}", flush=True)
+            print(f"[{i + len(skipped)}/{len(vids)}] {vid}: {'ok' if code == 0 else f'exit {code}'}", flush=True)
 
     rescanned = set(vids) - set(failed)
     merged = [g for g in games if g["video_id"] not in rescanned]
