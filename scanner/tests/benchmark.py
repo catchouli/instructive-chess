@@ -514,6 +514,7 @@ def run(catalog: Path) -> dict:
 def _summary(m: list[dict], indent: str = "  ") -> None:
     """The per-game correctness lines (the 95% target) for one group of games."""
     print(f"{indent}Moves    every move right       {_pct(sum(r['moves_ok'] for r in m), len(m))}")
+    print(f"{indent}         ...and read to the end {_pct(sum(r['moves_ok'] and r['ply'] >= r['real_ply'] for r in m), len(m))}")
     print(f"{indent}Clocks   ≥{CLOCK_GAME_OK_FRAC:.0%} of values ±{CLOCK_TOLERANCE_S}s     "
           f"{_pct(sum(r['clock']['ok'] for r in m), len(m))}")
     print(f"{indent}Ratings  both sides ±{RATING_TOLERANCE}         {_pct(sum(r['rating_ok'] for r in m), len(m))}")
