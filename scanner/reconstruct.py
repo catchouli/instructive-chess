@@ -39,6 +39,9 @@ FUZZY_CONFIRM_S = 2.0  # a fuzzy bunch's position read exactly this long confirm
 UNREACH_BUNCH = 0.0  # a bunch accepted right after an unexplainable reading a square off ends trust (0 = off)
 RETRACT_ENDS_TRUST = 1.0  # moves accepted right after an undo or detour end trust (0 = off)
 RETRACT_BROWSE = False    # ...and after browsing back (3 -> 1 leaks either way for 2.5x the cost)
+BROWSE_STEP_S = 3.0       # a ply this recent that moved the board toward the earlier position the viewer
+                          # then browsed to is taken back: a frame caught mid-step (0 = off)
+BROWSE_STEP_PLIES = 2     # ...up to this many (on 14 videos, 2 gave 8,438 right plies and 1 gave 8,402)
 BRIEF_UNDO_NEAR = 3       # ...but one ply shown briefly and taken back only within this many plies of an
                           # unexplainable reading a square off (0 = always): see EXPERIMENTS.md
 HIDDEN_KING = 1.0  # a missing king: try castling, and moves by its side are guesses (0 = off)
@@ -998,6 +1001,17 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 last_retract = ts
                 misses = 0
                 continue
+            for _ in range(BROWSE_STEP_PLIES if BROWSE_STEP_S else 0):
+                if browsing or earlier[-1] >= n - 1 or ts - current.move_seconds[-1] > BROWSE_STEP_S \
+                        or _hamming(history[n], target) >= _hamming(history[n - 1], target):
+                    break
+                # the last ply took the board part of the way to the position the
+                # viewer browsed back to: a frame caught between the two, not a
+                # move (traced: 9.Qe4 Nxf4, then browsing back to before 9.Qe4
+                # read as "10.Qa4" - the queen back on a4 - a second earlier)
+                note(ts, f"browsing back: ply {current.ply} {current.moves_san[-1]} was a step towards it")
+                retract_to(n - 1)
+                n -= 1
             browsing = True
             last_retract = ts
             if earlier[-1] == n - 1:

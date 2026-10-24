@@ -8,6 +8,14 @@
         "*"
       ],
       "why": "The video (frame at 1500 s) shows SenseiDanya (White) vs GMHunter9, 9.Ng3 played; that game isn't in the archive window, and games from other players share its King's Indian Samisch for 11-16 plies (three matched in turn). Checked 2026-10-22."
+    },
+    {
+      "video_id": "hBzXn8Kdaao",
+      "start_seconds": 1227,
+      "not": [
+        "https://www.chess.com/game/live/37649365247"
+      ],
+      "why": "Matched only on 12 plies of Najdorf theory (6.Bg5 Nbd7): the video's game goes 7.f4 Qc7 8.Qf3, the archive game (DragonB70 v DanielNaroditsky, 3+0) 7.Qe2 Qb6. Checked 2026-10-23."
     }
   ]
 }

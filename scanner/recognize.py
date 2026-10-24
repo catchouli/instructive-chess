@@ -225,12 +225,44 @@ def _align_cost(frame_bgr: np.ndarray, box) -> float:
     return cost
 
 
+TUNE_GRID = 0.0   # autotune_box fits the empty middle ranks' squares, not the pieces; scan.py turns it on for a video that gave no games
+
+
+def _grid_cost(gray: np.ndarray, box) -> float:
+    """How badly a candidate box fits an opening position's empty middle
+    ranks: each of their 32 squares should be one flat colour, light and
+    dark alternating. Within-square spread over light/dark contrast."""
+    x, y, w, h = box
+    xe, ye = np.linspace(x, x + w, 9), np.linspace(y, y + h, 9)
+    spread, means = [], ([], [])
+    for r in range(2, 6):
+        for c in range(8):
+            y0, y1, x0, x1 = int(ye[r]) + 2, int(ye[r + 1]) - 2, int(xe[c]) + 2, int(xe[c + 1]) - 2
+            if y0 < 0 or x0 < 0 or y1 > gray.shape[0] or x1 > gray.shape[1] or y1 <= y0 or x1 <= x0:
+                return 1e9
+            cell = gray[y0:y1, x0:x1]
+            spread.append(float(cell.std()))
+            means[(r + c) % 2].append(float(cell.mean()))
+    return float(np.mean(spread) / (abs(np.mean(means[0]) - np.mean(means[1])) + 1e-6))
+
+
 def autotune_box(frame_bgr: np.ndarray, box, reach: int = 12):
-    """Nudge the detected box so an opening frame's pieces sit dead-centre."""
+    """Nudge the detected box so it fits an opening frame. With TUNE_GRID,
+    by the squares of the empty middle ranks: centring the pieces
+    (_align_cost) moved Naroditsky's full-height blue board 8 px in and
+    4% small (568,8 706 for 560,0 720) - the glyphs aren't centred in their
+    squares and the flat squares' compression noise counts as pieces - and
+    the video read 151 of 3,476 frames."""
     from board_detect import Box
 
     x, y, w, h = box.as_tuple() if hasattr(box, "as_tuple") else box
-    best, best_cost = (x, y, w, h), _align_cost(frame_bgr, (x, y, w, h))
+    if TUNE_GRID:
+        gray = cv2.copyMakeBorder(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32),
+                                  reach, reach, reach, reach, cv2.BORDER_REPLICATE)
+        cost_of = lambda b: _grid_cost(gray, (b[0] + reach, b[1] + reach, b[2], b[3]))   # noqa: E731
+    else:
+        cost_of = lambda b: _align_cost(frame_bgr, b)   # noqa: E731
+    best, best_cost = (x, y, w, h), cost_of((x, y, w, h))
     for step in (6, 2):
         bx, by, bw, bh = best
         for dx in range(-reach, reach + 1, step):
@@ -239,7 +271,7 @@ def autotune_box(frame_bgr: np.ndarray, box, reach: int = 12):
                     cand = (bx + dx, by + dy, bw + ds, bh + ds)
                     if cand[2] < 40 or cand[3] < 40:
                         continue
-                    cost = _align_cost(frame_bgr, cand)
+                    cost = cost_of(cand)
                     if cost < best_cost:
                         best_cost, best = cost, cand
     return Box(*best, score=float(best_cost))

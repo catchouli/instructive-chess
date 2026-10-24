@@ -55,6 +55,10 @@ ACCOUNTS = {
     "Daniel Naroditsky": ["SenseiDanya", "OhMyLands", "danielnaroditsky", "FrankfurtAirport"],
     "John Bartholomew": ["Fins0905"],
     "GingerGM": ["Ginger_GM"],
+    # pilot channels (2026-10-23): usernames read off the videos
+    "IM Alex Banzea": ["SnapChessTikTok", "AlexBanzea_Chessable", "AlexBanzea"],
+    "chessbrah": ["sterkurstrakur", "systematic", "ebenetzebeth"],
+    "ChessDojo": ["DojoAggRep", "TarraschSmurf"],
 }
 # lichess accounts, searched via the per-user export. That endpoint needs a
 # personal API token (no scopes) - anonymous requests are either refused or

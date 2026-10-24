@@ -442,6 +442,14 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
         g.rating_white, g.rating_black = rating_read.drop_implausible_pairing(white, black)
 
 
+def _any_kept(model, readings, args) -> bool:
+    """Would these readings give at least one game worth keeping?"""
+    if model is None:
+        return False
+    games = reconstruct.reconstruct(recognize.vote_stream(readings))
+    return any(g.confidence >= args.min_confidence and g.ply >= args.min_ply for g in games)
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
 
@@ -484,6 +492,7 @@ def main(argv: list[str]) -> int:
         print(f"[3/6] reusing the readings in {saved.name}")
         data = json.loads(saved.read_text())
         readings = [(ts, pl) for ts, pl in data["readings"]]
+        recognize.TUNE_GRID = data.get("tune_grid", 0.0)    # fit the box as the scan that saved them did
         # the piece templates aren't saved: calibrate them again on the first opening frame
         model = None
         for ts, frame in iter_frames(src.path, args.fps, 0.0, 0.0):
@@ -503,6 +512,18 @@ def main(argv: list[str]) -> int:
                 model, box_read, readings = read_frames(iter_frames(src.path, args.fps, args.start, args.end), alt, log=print)
                 if model is not None:
                     break
+        if not args.crop and not _any_kept(model, readings, args):
+            # nothing came of it: fit the box by the squares of the opening's
+            # empty middle ranks instead of by its pieces (recognize.TUNE_GRID).
+            # Only as a fallback: on 22 videos that already gave games it found
+            # a worse box as often as a better one (171 games listed -> 149).
+            print("      no games; reading again with the box fitted to the board's squares")
+            recognize.TUNE_GRID = 1.0
+            grid = read_frames(iter_frames(src.path, args.fps, args.start, args.end), box, log=print)
+            if _any_kept(grid[0], grid[2], args):
+                model, box_read, readings = grid
+            else:
+                recognize.TUNE_GRID = 0.0
         box = box_read
     if model is None:
         print("      never saw an opening position - no games recorded", file=sys.stderr)
@@ -511,7 +532,8 @@ def main(argv: list[str]) -> int:
         # keep the raw readings: reconstruction can then be re-run or traced
         # (tests/trace_video.py) without reading the frames again
         (download.CACHE / f"{src.video_id}-readings.json").write_text(
-            json.dumps({"box": box.as_tuple(), "fps": args.fps, "readings": readings}))
+            json.dumps({"box": box.as_tuple(), "fps": args.fps, "tune_grid": recognize.TUNE_GRID,
+                        "readings": readings}))
     print(f"      {len(readings)} frames, {sum(1 for _, p in readings if p)} with a readable board")
 
     print("[4/6] reconstructing games")
