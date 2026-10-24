@@ -446,7 +446,7 @@ def _any_kept(model, readings, args) -> bool:
     """Would these readings give at least one game worth keeping?"""
     if model is None:
         return False
-    games = reconstruct.reconstruct(recognize.vote_stream(readings))
+    games = reconstruct.reconstruct(recognize.vote_stream(readings), raw=dict(readings))
     return any(g.confidence >= args.min_confidence and g.ply >= args.min_ply for g in games)
 
 
@@ -537,8 +537,9 @@ def main(argv: list[str]) -> int:
     print(f"      {len(readings)} frames, {sum(1 for _, p in readings if p)} with a readable board")
 
     print("[4/6] reconstructing games")
+    raw = dict(readings)
     readings = recognize.vote_stream(readings)
-    games = reconstruct.reconstruct(readings)
+    games = reconstruct.reconstruct(readings, raw=raw)
     kept = [g for g in games if g.confidence >= args.min_confidence and g.ply >= args.min_ply]
     if not args.no_refine:
         split = sum(refine.refine_game(src.path, box, model, g, iter_frames) for g in kept)

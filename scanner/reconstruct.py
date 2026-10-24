@@ -44,6 +44,11 @@ BROWSE_STEP_S = 3.0       # a ply this recent that moved the board toward the ea
 BROWSE_STEP_PLIES = 2     # ...up to this many (on 14 videos, 2 gave 8,438 right plies and 1 gave 8,402)
 BRIEF_UNDO_NEAR = 3       # ...but one ply shown briefly and taken back only within this many plies of an
                           # unexplainable reading a square off (0 = always): see EXPERIMENTS.md
+RAW_FALLBACK = 1.0  # a voted reading nothing explains is tried again as the raw frame (0 = off): see EXPERIMENTS.md
+RAW_DOUBTFUL = 3.0  # ...and its moves end trust: 1 = when the voted reading was a square off, 2 = always,
+                    # 3 = when they and the next reading's make a big bunch, 0 = never
+RAW_SPLIT_S = 5.0   # ...the next reading this soon after
+RAW_SPLIT_BUNCH = 3  # ...together this many plies (trust.BIG_BUNCH)
 HIDDEN_KING = 1.0  # a missing king: try castling, and moves by its side are guesses (0 = off)
 RECOVER = 1.0          # readings stopped following: re-explain them from a few plies back (0 = off,
                        # 1 = not for a reading with several routes from here, 2 = for those too)
@@ -694,10 +699,13 @@ def _premove_display(board: chess.Board, target: str) -> str | None:
     return None
 
 
-def _distinct_states(readings: list[tuple[float, str | None]]):
-    """Collapse repeats; yield ('state', ts, placement) and ('gap', ts, None)."""
+def _distinct_states(readings: list[tuple[float, str | None]], raw: dict | None = None):
+    """Collapse repeats; yield ('state', ts, placement) and ('gap', ts, None).
+    With `raw` (see RAW_FALLBACK), a repeat whose raw frame changed is kept:
+    the raw frame may say what the vote hid."""
     out = []
     last = None
+    last_raw = None
     missing = 0
     for ts, placement in readings:
         if placement is None:
@@ -707,9 +715,11 @@ def _distinct_states(readings: list[tuple[float, str | None]]):
                 last = None
             continue
         missing = 0
-        if placement != last:
+        now_raw = raw.get(ts) if raw else None
+        if placement != last or (now_raw and now_raw != last_raw and now_raw != placement):
             out.append(("state", ts, placement))
             last = placement
+        last_raw = now_raw
     return out
 
 
@@ -789,11 +799,13 @@ def _clock_contradicts_bridge(clock_by_side: dict[str, list[tuple[float, float]]
 
 def reconstruct(readings: list[tuple[float, str | None]],
                  clock_by_side: dict[str, list[tuple[float, float]]] | None = None,
-                 trace=None) -> list[Game]:
+                 trace=None, raw: dict[float, str | None] | None = None) -> list[Game]:
     """`trace(ts, message)`, if given, is told what happened at each reading
     (games opened and closed, moves taken, readings skipped and why) - for
-    debugging a video, see tests/trace_video.py."""
-    events = _distinct_states(readings)
+    debugging a video, see tests/trace_video.py. `raw`, if given, maps each
+    reading's time to the frame as read before recognize.vote_stream: see
+    RAW_FALLBACK."""
+    events = _distinct_states(readings, raw if RAW_FALLBACK else None)
     note = trace or (lambda ts, msg: None)
     games: list[Game] = []
     current: Game | None = None
@@ -838,15 +850,24 @@ def reconstruct(readings: list[tuple[float, str | None]],
             board.push_san(san)
 
     def next_state(i: int):
-        """The next readable board after events[i], if it's soon enough."""
-        for kind2, ts2, placement2 in events[i + 1:i + 3]:
+        """The next readable board after events[i], if it's soon enough
+        (repeats kept for their raw frame, see _distinct_states, don't count)."""
+        seen = 0
+        for kind2, ts2, placement2 in events[i + 1:]:
             if kind2 != "state" or ts2 - events[i][1] > LOOKAHEAD_S:
                 return None
-            return placement2
+            if placement2 != events[i][2]:
+                return placement2
+            seen += 1
+            if seen >= 2:
+                return None
         return None
 
     misses = 0
     ei = -1
+    raw_tried = -1    # the event last tried again as its raw frame
+    raw_unreach1 = False   # ...and its voted reading was unreachable, a square off
+    raw_split = None       # (first ply, plies, time) of the last ply taken from a raw frame
     redo = 0      # re-examine the same reading from the new position (see the partial check)
     while ei + 1 < len(events) or redo:
         if redo:
@@ -1112,7 +1133,8 @@ def reconstruct(readings: list[tuple[float, str | None]],
         # noise: skip it and let the next one tell the story.
         partial = moves is not None and isinstance(info, int) and info > len(moves)   # a shared prefix of deeper routes
         exact_now = moves is not None and _lands_exactly(board, moves, target)
-        if LOOKAHEAD and moves is not None and not partial and (not exact_now or len(moves) >= 2):
+        from_raw = raw_tried == ei     # a raw frame can catch a piece mid-drag: check it like a bunch
+        if LOOKAHEAD and moves is not None and not partial and (not exact_now or len(moves) >= 2 or from_raw):
             # Moves accepted a square off, or several at once: a frame caught
             # mid-capture (traced: "Bb5" for the trade Qb5 Qxb5 Bxb5 with one
             # queen already gone), or a piece in hand plus the opponent's
@@ -1126,6 +1148,33 @@ def reconstruct(readings: list[tuple[float, str | None]],
                         and not _explains_next(board, moves, nxt_tgt):
                     note(ts, f"lookahead: the next reading follows from here, not from {board.variation_san(moves)}")
                     moves, info = None, "superseded"
+        if LOOKAHEAD and moves is not None and from_raw and not partial:
+            # a raw frame's moves are kept only if the next reading doesn't
+            # follow more directly from before them (traced: 7.Bc4, the
+            # bishop caught on d3 on its way, read as "7.Bd3", and then the
+            # bishop on c4 taken for a premove arrow; 19...Rxe3 20.Rxe3 with
+            # the rook caught on e5, read as "19...Re5 20.Re2 Rxe3 21.Rxe3")
+            following = next_state(ei)
+            if following is not None:
+                nxt_tgt = following[::-1] if current.flipped else following
+                if nxt_tgt != cur_placement and _reachable(cur_placement, nxt_tgt):
+                    via = board.copy()
+                    for mv in moves:
+                        via.push(mv)
+                    after = None
+                    if _reachable(_placement_of(via), nxt_tgt):
+                        after, _ = _find_sequence(via, nxt_tgt, MAX_DEPTH, NODE_BUDGET // 4)
+                        if after is not None and not _lands_exactly(via, after, nxt_tgt):
+                            after = None
+                    depth = len(moves) + len(after) - 1 if after else len(moves)
+                    routes = []
+                    short, _ = _find_sequence(board, nxt_tgt, depth, NODE_BUDGET // 4, routes)
+                    direct = short if short and len(short) <= depth and _lands_exactly(board, short, nxt_tgt) else \
+                        next((r for r in routes if len(r) <= depth and _lands_exactly(board, r, nxt_tgt)), None)
+                    if direct is not None and direct[:len(moves)] != moves:
+                        note(ts, f"lookahead: the next reading is {board.variation_san(direct)} from here; "
+                                 f"the raw frame's {board.variation_san(moves)} was a piece on its way")
+                        moves, info = None, "superseded"
         if LOOKAHEAD and moves is not None and (len(moves) >= 2 or partial):
             following = next_state(ei)
             if following is not None:
@@ -1168,6 +1217,25 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 moves, info = cands, "undo"
                 after_retract = True
                 last_retract = ts
+
+        if moves is None and RAW_FALLBACK and raw and raw_tried != ei \
+                and info not in ("superseded", "clock-contradicted"):
+            # The flicker vote mixes consecutive frames square by square, so
+            # when moves come every second it can blend two positions into one
+            # that never existed (traced: a king walking f1-e2-d3 voted off
+            # e2, while the raw frames showed each position exactly and the
+            # game closed 26 plies early). Try the frame as it was read.
+            alt = raw.get(ts)
+            if alt and alt != placement and (alt[::-1] if current.flipped else alt) not in history:
+                # (a raw frame showing an earlier position is the viewer
+                # browsing back: it may add moves, never take any back -
+                # traced: 24...Qe5 undone for "Qe7" mid-browse)
+                note(ts, f"voted reading unexplained ({info}): trying the raw frame")
+                raw_unreach1 = info == "unreachable" and _hamming(cur_placement, target) == 1
+                events[ei] = ("state", ts, alt)
+                raw_tried = ei
+                redo += 1
+                continue
 
         if moves is None:
             # a noisy / mid-animation reading - step over it and try to resync
@@ -1227,6 +1295,16 @@ def reconstruct(readings: list[tuple[float, str | None]],
             current.doubtful.extend(range(current.ply, current.ply + len(moves)))
         if after_unreach1:
             current.rough.append(current.ply)
+        if from_raw and (RAW_DOUBTFUL == 2 or (RAW_DOUBTFUL == 1 and raw_unreach1)):
+            current.doubtful.extend(range(current.ply, current.ply + len(moves)))
+        if RAW_DOUBTFUL == 3 and raw_split is not None and not from_raw and ts - raw_split[2] <= RAW_SPLIT_S \
+                and raw_split[1] + len(moves) >= RAW_SPLIT_BUNCH and raw_split[0] + raw_split[1] == current.ply:
+            # the raw frame split a bunch the vote would have shown whole, and
+            # a big bunch is what ends trust: keep it ending
+            # there (traced: 3...Nc6 4.Nxc6 dxc6 split, then 8.Qe2 misread
+            # and trusted)
+            current.doubtful.extend(range(raw_split[0], current.ply + len(moves)))
+        raw_split = (current.ply, len(moves), ts) if from_raw else None
         after_retract = after_unreach1 = False
         if hidden_kings:
             # where a missing king really is is a guess: a move by its side

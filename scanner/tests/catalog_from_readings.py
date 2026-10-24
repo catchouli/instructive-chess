@@ -42,7 +42,7 @@ def main(argv: list[str]) -> int:
 
     src = download.fetch(args.url)
     voted = recognize.vote_stream(readings)
-    games = reconstruct.reconstruct(voted)
+    games = reconstruct.reconstruct(voted, raw=dict(readings))
     kept = [g for g in games if g.confidence >= args.min_confidence and g.ply >= 2]
     print(f"      {src.title!r}: {len(games)} games found, {len(kept)} kept "
           f"(confidence >= {args.min_confidence})")

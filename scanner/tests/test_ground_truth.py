@@ -75,7 +75,7 @@ def test_accuracy_against_real_games(video_id):
     real_games = gt.load_fixture(fixture_name)
 
     voted = recognize.vote_stream(readings)
-    games = reconstruct.reconstruct(voted)
+    games = reconstruct.reconstruct(voted, raw=dict(readings))
     rep = gt.report([g.moves_san for g in games], real_games)
 
     print(f"\n{video_id}: {rep['n_games']} reconstructed games, "

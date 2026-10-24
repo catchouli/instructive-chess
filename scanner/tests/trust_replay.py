@@ -82,7 +82,8 @@ def _build_one(vid: str, keep_unmatched: bool = False) -> list[dict]:
         return []
     reconstruct.UNREACH_BUNCH = reconstruct.RETRACT_ENDS_TRUST = 0.0
     notes: list[tuple[float, str]] = []
-    games = [g for g in reconstruct.reconstruct(recognize.vote_stream(readings), trace=lambda ts, m: notes.append((ts, m)))
+    games = [g for g in reconstruct.reconstruct(recognize.vote_stream(readings), trace=lambda ts, m: notes.append((ts, m)),
+                                                     raw=dict(readings))
              if g.confidence >= 0.6 and g.ply >= 10]
     up = str(info.get("upload_date") or "")
     published = f"{up[:4]}-{up[4:6]}-{up[6:8]}" if len(up) == 8 else ""

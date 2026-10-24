@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
 
     trace: list[tuple[float, str]] = []
     voted = recognize.vote_stream(readings)
-    games = reconstruct.reconstruct(voted, trace=lambda ts, m: trace.append((ts, m)))
+    games = reconstruct.reconstruct(voted, trace=lambda ts, m: trace.append((ts, m)), raw=dict(readings))
     print(f"{len(games)} games reconstructed, {len(trace)} trace lines")
 
     cands = []
