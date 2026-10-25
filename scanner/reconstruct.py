@@ -49,6 +49,8 @@ RAW_DOUBTFUL = 3.0  # ...and its moves end trust: 1 = when the voted reading was
                     # 3 = when they and the next reading's make a big bunch, 0 = never
 RAW_SPLIT_S = 5.0   # ...the next reading this soon after
 RAW_SPLIT_BUNCH = 3  # ...together this many plies (trust.BIG_BUNCH)
+RAW_CONFIRM = 2.0   # a raw frame's moves end trust when the next distinct reading doesn't follow from them:
+                    # 1 = always, 2 = only when the moved piece going elsewhere explains it better (0 = off)
 HIDDEN_KING = 1.0  # a missing king: try castling, and moves by its side are guesses (0 = off)
 RECOVER = 1.0          # readings stopped following: re-explain them from a few plies back (0 = off,
                        # 1 = not for a reading with several routes from here, 2 = for those too)
@@ -797,6 +799,27 @@ def _clock_contradicts_bridge(clock_by_side: dict[str, list[tuple[float, float]]
     return False
 
 
+def _went_elsewhere(pending, target: str) -> bool:
+    """For RAW_CONFIRM: does `target`, a reading nothing explained right
+    after a raw frame's moves, fit better with the first of them going to
+    another square (a piece caught on its way)? Always yes for RAW_CONFIRM 1."""
+    if RAW_CONFIRM != 2:
+        return True
+    _, _, before, moves = pending
+    via = before.copy(stack=False)
+    for mv in moves:
+        via.push(mv)
+    off = _hamming(_placement_of(via), target)
+    first = moves[0]
+    for mv in before.legal_moves:
+        if mv.from_square == first.from_square and mv.to_square != first.to_square:
+            alt = before.copy(stack=False)
+            alt.push(mv)
+            if _hamming(_placement_of(alt), target) < off:
+                return True
+    return False
+
+
 def reconstruct(readings: list[tuple[float, str | None]],
                  clock_by_side: dict[str, list[tuple[float, float]]] | None = None,
                  trace=None, raw: dict[float, str | None] | None = None) -> list[Game]:
@@ -868,6 +891,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
     raw_tried = -1    # the event last tried again as its raw frame
     raw_unreach1 = False   # ...and its voted reading was unreachable, a square off
     raw_split = None       # (first ply, plies, time) of the last ply taken from a raw frame
+    raw_pending = None     # (game, plies, board before, moves) taken from a raw frame, awaiting a reading that follows
     redo = 0      # re-examine the same reading from the new position (see the partial check)
     while ei + 1 < len(events) or redo:
         if redo:
@@ -1045,6 +1069,9 @@ def reconstruct(readings: list[tuple[float, str | None]],
         if premove is not None:
             # not a move, not noise either - the opponent is still thinking
             note(ts, f"premove shown ({premove})")
+            if raw_pending is not None and raw_pending[0] is current and _went_elsewhere(raw_pending, target):
+                current.doubtful.extend(raw_pending[1])
+            raw_pending = None
             continue
 
         # Always search to the full depth on the first (and possibly only) try:
@@ -1239,6 +1266,13 @@ def reconstruct(readings: list[tuple[float, str | None]],
 
         if moves is None:
             # a noisy / mid-animation reading - step over it and try to resync
+            if raw_pending is not None and raw_pending[0] is current and _went_elsewhere(raw_pending, target):
+                # nothing after a raw frame's moves followed from them, and
+                # the piece it moved fits better on another square (traced:
+                # 60...f5 61.gxf6 e.p. read as "60...f6", the pawn caught on
+                # its way; then f5 was taken for a premove)
+                current.doubtful.extend(raw_pending[1])
+            raw_pending = None
             misses += 1
             current.skipped += 1
             skipped.append(target)
@@ -1305,6 +1339,8 @@ def reconstruct(readings: list[tuple[float, str | None]],
             # and trusted)
             current.doubtful.extend(range(raw_split[0], current.ply + len(moves)))
         raw_split = (current.ply, len(moves), ts) if from_raw else None
+        raw_pending = (current, range(current.ply, current.ply + len(moves)), board.copy(stack=False), moves) \
+            if from_raw and RAW_CONFIRM else None
         after_retract = after_unreach1 = False
         if hidden_kings:
             # where a missing king really is is a guess: a move by its side
