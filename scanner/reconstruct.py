@@ -38,6 +38,9 @@ BUNCH_UNDO = True      # ...and so is a whole bunch accepted from one reading
 FUZZY_CONFIRM_S = 2.0  # a fuzzy bunch's position read exactly this long confirms it (0 = never)
 UNREACH_BUNCH = 0.0  # a bunch accepted right after an unexplainable reading a square off ends trust (0 = off)
 RETRACT_ENDS_TRUST = 1.0  # moves accepted right after an undo or detour end trust (0 = off)
+REPLAY_SHARED = 10     # a game that opens with this many of an earlier game's plies...
+REPLAY_FAST = 14       # ...and has this many plies within REPLAY_WINDOW_S anywhere
+REPLAY_WINDOW_S = 4.0  # is the narrator stepping back through that game: dropped (0 = off)
 RETRACT_BROWSE = False    # ...and after browsing back (3 -> 1 leaks either way for 2.5x the cost)
 BROWSE_STEP_S = 3.0       # a ply this recent that moved the board toward the earlier position the viewer
                           # then browsed to is taken back: a frame caught mid-step (0 = off)
@@ -820,6 +823,35 @@ def _went_elsewhere(pending, target: str) -> bool:
     return False
 
 
+def _is_replay(g: Game, earlier: list[Game]) -> bool:
+    """After a game the narrator often steps back through it, several plies a
+    second. At 1 fps that never formed a game, but in a stretch read again at
+    refine.STALL_FPS it does: a second copy of the game, partly misread (seen:
+    14 wrong plies trusted). Neither sign is enough alone: real games in one
+    video share up to 20 opening plies, and read at 6 fps a premoved opening
+    reaches 18 plies in 4 s. Together they were clean on 2,600 real games:
+    those sharing 10+ plies peaked at 11 plies in 4 s, the replays 17 to 29."""
+    if not REPLAY_FAST:
+        return False
+    shared = 0
+    for h in earlier:
+        n = 0
+        for a, b in zip(h.moves_san, g.moves_san):
+            if a != b:
+                break
+            n += 1
+        shared = max(shared, n)
+    if shared < REPLAY_SHARED:
+        return False
+    ts, j = g.move_seconds, 0
+    for i in range(len(ts)):
+        while ts[i] - ts[j] > REPLAY_WINDOW_S:
+            j += 1
+        if i - j + 1 >= REPLAY_FAST:
+            return True
+    return False
+
+
 def reconstruct(readings: list[tuple[float, str | None]],
                  clock_by_side: dict[str, list[tuple[float, float]]] | None = None,
                  trace=None, raw: dict[float, str | None] | None = None) -> list[Game]:
@@ -1401,6 +1433,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
             close("max plies")
 
     close("end of readings")
+    kept: list[Game] = []
     for g in games:
+        if _is_replay(g, kept):
+            note(g.start_seconds, f"replay of an earlier game dropped ({g.ply} plies)")
+            continue
         g.settled = _settled(g, readings)
-    return games
+        kept.append(g)
+    return kept

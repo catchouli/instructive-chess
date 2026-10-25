@@ -79,6 +79,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--from-readings", action="store_true",
                    help="reuse the board readings a previous scan saved (scanner/cache/<id>-readings.json) "
                         "instead of reading every frame again - for re-running reconstruction after a change")
+    p.add_argument("--no-stall-reread", action="store_true",
+                   help="skip re-reading at a higher frame rate the stretches where a game was lost (see refine.py)")
     p.add_argument("--no-refine", action="store_true",
                    help="skip re-reading fast-move moments at a higher frame rate (see refine.py)")
     p.add_argument("--no-clocks", action="store_true", help="skip reading on-screen clocks")
@@ -538,6 +540,17 @@ def main(argv: list[str]) -> int:
                                    "readings": readings}))
         os.replace(tmp, cached)
     print(f"      {len(readings)} frames, {sum(1 for _, p in readings if p)} with a readable board")
+
+    if not args.no_stall_reread and not args.start and not args.end:
+        # the frames re-read are kept, so a --from-readings run doesn't decode them again
+        stalls = download.CACHE / f"{src.video_id}-stalls.json"
+        cache = json.loads(stalls.read_text()) if stalls.exists() else {}
+        n = len(cache.get("ranges", []))
+        readings = refine.reread_stalls(src.path, box, model, readings, iter_frames, log=print, cache=cache)
+        if len(cache.get("ranges", [])) > n:
+            tmp = stalls.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(cache))
+            os.replace(tmp, stalls)
 
     print("[4/6] reconstructing games")
     raw = dict(readings)

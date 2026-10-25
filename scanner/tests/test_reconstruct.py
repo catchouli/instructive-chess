@@ -92,6 +92,25 @@ def test_two_games_in_one_stream():
     assert games[1].moves_san == SICILIAN
 
 
+def test_replay_of_an_earlier_game_is_dropped():
+    # a game, then the narrator stepping back through it six plies a second
+    # (as read at refine.STALL_FPS) - not a second game
+    line = ITALIAN + ["Bd2", "Bxd2+", "Nbxd2", "d5"]
+    game = stream_for(line)
+    replay = [(game[-1][0] + 30 + ts / 6, p) for ts, p in stream_for(line, hold=1)]
+    games = run(game + replay)
+    assert [g.moves_san for g in games] == [line]
+
+
+def test_same_opening_played_again_is_kept():
+    # the same line in the next game, at playing speed, is a real game
+    line = ITALIAN + ["Bd2", "Bxd2+", "Nbxd2", "d5"]
+    game = stream_for(line)
+    again = [(game[-1][0] + 30 + ts, p) for ts, p in stream_for(line)]
+    games = run(game + again)
+    assert [g.moves_san for g in games] == [line, line]
+
+
 def test_long_gap_ends_game():
     readings = stream_for(ITALIAN[:6])
     readings += [(readings[-1][0] + i, None) for i in range(1, reconstruct.GAP_FRAMES + 2)]

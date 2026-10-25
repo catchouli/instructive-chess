@@ -124,3 +124,62 @@ def refine_game(path: Path, box, model, game: reconstruct.Game, iter_frames) -> 
         game.fuzzy = [i for i in game.fuzzy if i not in span]
         game.ambiguous = [i for i in game.ambiguous if i not in span]
     return improved
+
+
+STALL_FPS = 6          # frames per second when re-reading a stall
+STALL_PRE = 4.0        # seconds before a stalled game's last ply to re-read (its last bunch)
+STALL_POST = 25.0      # ...and after it: the misses that closed the game
+STALL_ROUNDS = 2       # re-read the stalls a second reconstruction still has
+
+
+def _stalls(readings: list[tuple[float, str | None]], raw: dict | None = None) -> list[float]:
+    """When each game closed on too many misses ended: its last ply's time."""
+    out: list[float] = []
+
+    def note(ts, msg):
+        if msg.startswith("close too many misses"):
+            out.append(ts)
+    reconstruct.reconstruct(recognize.vote_stream(readings), trace=note, raw=raw)
+    return out
+
+
+def reread_stalls(path: Path, box, model, readings: list[tuple[float, str | None]], iter_frames,
+                  log=lambda msg: None, cache: dict | None = None) -> list[tuple[float, str | None]]:
+    """A game closed on too many misses usually went off track on moves played
+    faster than the 1 fps readings can follow: each reading is a position a
+    ply or two further on, and the flicker vote blends consecutive ones into
+    boards that never existed. Read each such stretch again at STALL_FPS and
+    put those frames in place of the 1 fps ones, so reconstruction sees every
+    position on the way. Returns the raw readings with the dense stretches in.
+
+    cache ({"ranges": [[a, b], ...], "frames": [[ts, placement], ...]}, kept
+    by scan.py next to the readings) holds the stretches read before; one
+    inside a cached range is taken from it instead of decoding the video
+    again, and newly read ones are added to it."""
+    if cache is not None:
+        cache.setdefault("ranges", [])
+        cache.setdefault("frames", [])
+    done: list[tuple[float, float]] = []
+    for _ in range(STALL_ROUNDS):
+        new = [(max(0.0, t - STALL_PRE), t + STALL_POST) for t in _stalls(readings, dict(readings))
+               if not any(a <= t <= b for a, b in done)]
+        if not new:
+            break
+        for a, b in new:
+            dense: list[tuple[float, str | None]] = []
+            cached = cache is not None and any(ca <= a and b <= cb for ca, cb in cache["ranges"])
+            if cached:
+                dense = [(ts, pl) for ts, pl in cache["frames"] if a <= ts <= b]
+            else:
+                for ts, frame in iter_frames(path, STALL_FPS, a, b):
+                    rd = recognize.read_board(frame, box, model)
+                    ok = rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34
+                    dense.append((round(ts, 3), rd.placement if ok else None))
+                if cache is not None:
+                    cache["ranges"].append([a, b])
+                    cache["frames"] += dense
+            readings = [r for r in readings if not a <= r[0] <= b] + dense
+            readings.sort(key=lambda r: r[0])
+            log(f"      re-read the stall at {a:.0f}-{b:.0f}s at {STALL_FPS} fps{' (cached)' if cached else ''}")
+        done += new
+    return readings
