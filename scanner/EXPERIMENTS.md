@@ -72,6 +72,29 @@ platform for moves, clocks and ratings). `tests/sets/guard.txt`: 20 videos sampl
 Cap decoder threads in parallel runs (`FFMPEG_THREADS=2`, `OMP_THREAD_LIMIT=1`) and keep the
 job total at or below the cores (16): ffmpeg takes ~5 cores a decode by default.
 
+### Caching a rescan (2026-10-26)
+
+A `--from-readings` rescan keeps what it decoded or read in `scanner/cache/`, so the next run does
+only the stages whose code changed. Each cache is keyed by the board box and a fingerprint of the
+source of the modules that produced it (`scan.code_stamp`), so a code change re-reads instead of
+reusing stale results.
+
+| cache | holds |
+|---|---|
+| `VID-dense.json` | 6 fps board readings on a fixed grid (k/6 s), shared by the stall re-read and the fast-move re-timing (`refine.DenseFrames`); adopts the frames of the older `VID-stalls.json` |
+| `VID-clocks.json` | clock regions and readings per window (windows on whole seconds) |
+| `VID-model.npz` | the piece templates, so board detection and the whole-video decode are skipped |
+| `VID-ratings.json` | every rating read, per hi-res frame and box shift |
+
+Reconstruction also got faster: a search updates the distance to the reading on the 2-4 squares a
+move changes instead of re-comparing all 64, and a search repeated within one run (the stall
+re-read reconstructs up to three times) is answered from memory.
+
+A run with the caches filled gives exactly the same games as one without them (checked on
+TaM0A-J2dQY and 3Qw4AL8RDOw; reconstruction alone on 12 videos). Times per video: TaM0A-J2dQY
+387 s -> 47 s, 3Qw4AL8RDOw 1,091 s -> 90 s; reconstruction on the 12 videos 1,215 s -> 538 s.
+The first run after the change fills the caches and costs as much as before.
+
 Exception to "don't edit while it runs": the 2026-10-20 full rebuild (`handoff/full1`) took
 in-process Tesseract and the hi-res frame cache mid-run; both give identical output (checked).
 
@@ -265,6 +288,10 @@ On the catalog before the 2026-10-24 merge (1,991 matched games), 1,544 have eve
 | ...dropping a game that opens with 10+ plies of an earlier game in the video **and** has 14+ plies within 4 s (`reconstruct.REPLAY_SHARED`, `REPLAY_FAST`). Neither alone separates them: real games in one video share up to 20 opening plies, and at 6 fps a premoved opening reaches 18 plies in 4 s; real games sharing 10+ plies peaked at 11 in 4 s | Applied to the same arms: drops 8 of the 11 copies (the other 3 are slow and short), including the wrong one; drops nothing among the 2,422 live games or the 1 fps arm, nor at 8 and 12. Matched 626 -> 648, read to the end 217 -> 237 (+9.2%), right plies 43,788 -> 46,588 (+6.4%), trusted plies 13,092 -> 13,420 (+2.5%), shown 373 -> 381, **0 wrong trusted both arms**. Losses: every move right 491 -> 483 (mostly games now read further that pick up a later error: 37/37 -> 64/89); right plies down in 20 games (-380) against up in 121 (+3,499); trusted lower in 8 games, higher in 33; 6 matched games lost. **Held out** (48 random other videos, guard in both arms): matched 151 -> 157, read to the end 57 -> 61 (+7%), right plies 8,147 -> 8,557 (+5.0%), trusted plies 3,068 -> 3,129 (+2.0%), shown 96 -> 99, **0 wrong trusted both arms**. Losses: every move right 120 -> 116 (10 games pick up an error, 9 of them in plies they hadn't read before: 29/29 -> 113/168; OhBPJlQYnvc 893 118 -> 113 is the one real loss); right plies down in 7 games (-127) against up in 27 (+537); trusted lower in 2, higher in 10; 3 matched games lost, 9 new. Cost: 155 stalls, 9.3 worker-minutes a video (18 on the hard ones) | **Yes** (in `scan.py` by default, `--no-stall-reread`; re-read frames cached in `VID-stalls.json` so a `--from-readings` rebuild reads them once) |
 | **Missed games**: place each video in wall-clock time from its matched games' end times, then count the archive games inside that span that aren't in the catalog | Unedited videos: 198 of 879 real games missing (22.5%); edited videos: 371 of 1,369 (27.1%); 281 videos can't be placed. Of the 198, 107 overlap an unmatched catalog game (found but too short to match) and 91 were never found. Cause traced in the "never found" ones: the board moves or changes size mid-stream (shAZCVixelw: 646 -> 610 px at ~6,343 s, nothing read after), and the box is re-fitted only at opening positions | Measurement |
 | Re-detect a lost board: after the first game, 120 frames in a row with under 10% readable means the board is lost; detect it again from the next 20 minutes and, if the box changed, read the rest with it (templates re-cut at the next opening) | shAZCVixelw: matched 8 -> 10, right plies 479 -> 657, 0 wrong, 650 s to re-read. On 256 videos: lost in 255, but the box was unchanged in 161 (the board was covered or the stream showed something else) and no board was found in 6; 88 re-read, 54 of them with no opening position after (the new box was another screen). Matched 996 -> 1,013, every move right 792 -> 805, read to the end 298 -> 304, right plies 57,350 -> 58,599 (+2.2%), trusted 20,807 -> 20,867, shown 615 -> 616, 0 wrong both arms. Losses: right plies down in 3 games (-42) against up in 16 (+452); trusted down in 4 (-93; x-TMzSM51Cw 1218 46 -> 6); 19 matched games lost (1,260 right plies) against 36 new (2,099). Cost: 843 worker-minutes for the 88 re-reads | **No** for now: too little for the cost. Re-reading only after a lost board that shows an opening position later would cut most of it |
+| **Whole-library rescan with the stall re-read** (2026-10-26, `--from-readings`, 549 videos; first 315 scored, best copy of each real game against the live catalog) | Right plies 79,512 -> 85,894 (+8%), but read to the end 267 -> 243 (-9%), trusted plies 32,514 -> 31,418 (-3.4%), extra copies of a real game 12 -> 40, **1 wrong trusted game**. Even merged per video (each video keeps its old games unless the new ones are at least as good), read to the end stayed below live (249). Two causes, in the next rows | **Not merged** as it stood; rerun with the fixes below |
+| ...**a game's last move lost** after a quick resignation: `clock_read.live_move_count` looked for a clock tick from 1 s after a move, and a move timed at 6 fps (130.33 s) missed the tick in the first whole second. Now any tick more than 0.5 s after | 41 games lost their final move. The fix restores it on all 5 videos traced (TaM0A-J2dQY, cUOUbdsf7LE, JU1pLlOV04Y ×2, Mre1JH64oWs); whole-library effect measured in the next rescan | **Yes** |
+| ...**post-game review copies** the replay rule misses: a narrator stepping through a finished game at playing speed, sometimes into a variation (the wrong trusted game: rYTURNjPO50 879, 19 plies trusted, branching from the real game at ply 12). Drop a game whose clocks were read but never ran (each side read spans 1 s or less, 3+ reads) **and** that opens with 10+ plies of an earlier game (`reconstruct.REPLAY_FROZEN`, after clocks are read). Among the 32 games with frozen clocks, real games shared at most 8 opening plies with an earlier one | On 2,324 rescanned games: drops 4, three of them copies of an earlier real game (including the wrong one), one unmatched; no real game dropped | **Yes** |
+| Keep a game's final ply when the narrator browses back soon after it (3Qw4AL8RDOw: 22.Qxc7 found by reconstruction, then trimmed by the unsettled-tail drop) | Traced at 6 fps: for the 1.2 s before the narrator browsed back, every frame read c7 as empty, never as a queen (the square covered on screen). The position was never read exactly, so the drop is doing its job | **No** (left as is) |
 
 ## Arrows (from 2026-10-21)
 
