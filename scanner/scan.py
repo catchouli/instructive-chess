@@ -11,6 +11,7 @@ web/data/games.json for the static web app.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import os
 import json
@@ -403,7 +404,7 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game], cache:
                 g.clock_black_seconds = values
 
 
-def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -> None:
+def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game], cache: dict | None = None) -> None:
     """Best-effort: read each game's two player ratings from a single high-
     resolution frame a few seconds into the game (see download.fetch_hires_frame
     and rating_read.py). Unlike clocks, a rating is static for the whole
@@ -422,6 +423,26 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
     cap.release()
     if not lowres_h:
         return
+
+    # cache (scanner/cache/<id>-ratings.json, kept by main): each hi-res
+    # frame's height and every read made of it, so a rerun reads none again
+    cache = {} if cache is None else cache
+    heights, reads = cache.setdefault("heights", {}), cache.setdefault("reads", {})
+    loaded: dict[str, np.ndarray | None] = {}
+
+    def frame_at(ts):
+        k = f"{ts:.2f}"
+        if k not in loaded:
+            loaded[k] = download.fetch_hires_frame(src.url, ts)
+            heights[k] = None if loaded[k] is None else int(loaded[k].shape[0])
+        return loaded[k]
+
+    def read(fn, ts, *args, **kw):
+        k = f"{fn.__name__}|{ts:.2f}|{json.dumps([args, kw])}"
+        if k not in reads:
+            reads[k] = {f: (v.item() if hasattr(v, "item") else v)
+                        for f, v in dataclasses.asdict(fn(frame_at(ts), *args, **kw)).items()}
+        return rating_read.RatingReading(**reads[k])
 
     for g in games:
         if not g.move_seconds:
@@ -499,20 +520,21 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
 
         frames_and_boxes: list[tuple] = []
         for ts in seen:
-            frame = download.fetch_hires_frame(src.url, ts)
-            if frame is None:
+            if f"{ts:.2f}" not in heights:
+                frame_at(ts)
+            if heights[f"{ts:.2f}"] is None:
                 continue
-            scale = frame.shape[0] / lowres_h
+            scale = heights[f"{ts:.2f}"] / lowres_h
             scaled_box = (round(box.x * scale), round(box.y * scale),
                           round(box.w * scale), round(box.h * scale))
-            frames_and_boxes.append((frame, scaled_box))
+            frames_and_boxes.append((ts, scaled_box))
             # same top/bottom -> white/black convention as
             # clock_read.side_for_box: a broadcast always shows each
             # player's own info on their own side.
             top_side, bottom_side = ("white", "black") if g.flipped else ("black", "white")
             for dy in RATING_BOX_SHIFTS:
                 shifted = (scaled_box[0], scaled_box[1] + round(dy * scale), scaled_box[2], scaled_box[3])
-                reading = rating_read.read_ratings(frame, shifted, allow_region_fallback=False)
+                reading = read(rating_read.read_ratings, ts, shifted, allow_region_fallback=False)
                 vote(top_side, reading.top, reading.top_confidence)
                 vote(bottom_side, reading.bottom, reading.bottom_confidence)
             if len(g.clock_boxes) == 2:
@@ -520,7 +542,7 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
                 # useful, or the info panel naming both players; the row
                 # beside each clock is the real source there.
                 upper, lower = ([round(v * scale) for v in b] for b in g.clock_boxes)
-                beside = rating_read.read_ratings_beside_clocks(frame, scaled_box, upper, lower)
+                beside = read(rating_read.read_ratings_beside_clocks, ts, scaled_box, upper, lower)
                 vote(top_side, beside.top, beside.top_confidence, weight=2)
                 vote(bottom_side, beside.bottom, beside.bottom_confidence, weight=2)
             if all(leader(side)[1] >= len(RATING_BOX_SHIFTS) for side in votes):
@@ -529,8 +551,8 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
         white_conf = black_conf = -1.0
 
         if white is None or black is None:
-            for frame, scaled_box in frames_and_boxes:
-                reading = rating_read.read_ratings(frame, scaled_box, allow_region_fallback=True)
+            for ts, scaled_box in frames_and_boxes:
+                reading = read(rating_read.read_ratings, ts, scaled_box, allow_region_fallback=True)
                 if g.flipped:
                     cand_white, cand_white_conf = reading.top, reading.top_confidence
                     cand_black, cand_black_conf = reading.bottom, reading.bottom_confidence
@@ -699,7 +721,15 @@ def main(argv: list[str]) -> int:
         print("[6/6] reading player ratings - skipped (--no-ratings)")
     else:
         print("[6/6] reading player ratings")
-        annotate_ratings(src, box, kept)
+        ratings_file = download.CACHE / f"{src.video_id}-ratings.json"
+        key = {"box": [int(v) for v in box.as_tuple()], "code": code_stamp(rating_read, download)}
+        ratings = json.loads(ratings_file.read_text()) if whole and ratings_file.exists() else {}
+        if any(ratings.get(k) != v for k, v in key.items()):
+            ratings = dict(key)
+        before = json.dumps(ratings, sort_keys=True)
+        annotate_ratings(src, box, kept, cache=ratings)
+        if whole and json.dumps(ratings, sort_keys=True) != before:
+            write_json(ratings_file, ratings)
         n_rated = sum(1 for g in kept if g.rating_white is not None or g.rating_black is not None)
         print(f"      rating data for {n_rated}/{len(kept)} games")
 
