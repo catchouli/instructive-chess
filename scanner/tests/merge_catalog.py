@@ -38,6 +38,11 @@ def main(argv: list[str] | None = None) -> int:
 
     existing = [g for g in catalog.load(args.into) if g["video_id"] not in videos]
     merged = existing + fresh
+    ids = [g["id"] for g in merged]
+    if len(set(ids)) != len(ids):
+        # a scratch catalog that lists a video twice (e.g. two runs pasted together) would list each game twice
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        sys.exit(f"refusing to merge: {len(dup)} game ids appear twice ({' '.join(dup[:5])} ...)")
     merged.sort(key=catalog._sort_key, reverse=True)
     catalog.write(merged, args.into)
     print(f"merged {len(fresh)} games from {len(videos)} videos into {args.into} "
