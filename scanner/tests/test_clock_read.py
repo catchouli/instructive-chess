@@ -662,6 +662,15 @@ def test_physically_consistent_keeps_a_frozen_clock_and_an_increment():
     assert [r.seconds for r in _physically_consistent(rd)] == vals
 
 
+def test_live_move_count_sees_a_clock_in_tenths_running():
+    # under 20 s the clock shows tenths, and read once a second it can fall
+    # by under a second between frames: 18.1 -> 17.3 is still a running clock
+    moves = [100, 110, 120, 130, 140, 150, 170, 190, 204]
+    white = _ticking([(t, 30.0 - (min(t, 204) - 100) * 0.1) for t in range(100, 208)])
+    black = _ticking([(t, 20.0) for t in range(100, 205)] + [(205, 18.1), (206, 18.1), (207, 17.3)])
+    assert live_move_count(moves, {"white": white, "black": black}) == 9
+
+
 def test_live_move_count_ignores_a_clock_rising_after_the_game():
     moves = [100, 110, 120, 130, 140, 150, 170, 190, 204, 208, 215]
     white = _ticking([(t, 300 - min(t, 150) + 100 + (6 if t >= 212 else 0)) for t in range(100, 220)])

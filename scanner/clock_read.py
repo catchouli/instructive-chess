@@ -1578,6 +1578,15 @@ def assign_clock_sides(candidates: list[tuple[ClockBox, list[ClockReading]]],
     return {}
 
 
+def _ran(a: float, b: float) -> bool:
+    """A clock read a then b, a frame later, went down: by a whole second, or
+    by more than half of one when it shows tenths (under 20 s). Read once a
+    second, a clock showing tenths falls by 0.8-1.2 between frames, and
+    "a whole second" missed 18.1 -> 17.3: the game's last move was dropped
+    while the game went on (-rqPeGKVPbA 2658, 47 plies still to come)."""
+    return b <= a - 1 or (a != int(a) and b < a - 0.5)
+
+
 def live_move_count(move_times: list[float], readings_by_side: dict[str, list[ClockReading]],
                     game_over_after=lambda n: False) -> int:
     """How many of a game's moves were played while the game was still on:
@@ -1609,7 +1618,7 @@ def live_move_count(move_times: list[float], readings_by_side: dict[str, list[Cl
         # the game's last move (41 games on 315 videos).
         for readings in readings_by_side.values():
             vals = [r.seconds for r in readings if r.seconds is not None and r.t > t + 0.5]
-            if any(b <= a - 1 for a, b in zip(vals, vals[1:])):
+            if any(_ran(a, b) for a, b in zip(vals, vals[1:])):
                 return True
         return False
 
@@ -1619,7 +1628,7 @@ def live_move_count(move_times: list[float], readings_by_side: dict[str, list[Cl
         t1 = move_times[k - 1] + 0.5
         for readings in readings_by_side.values():
             vals = [r.seconds for r in readings if r.seconds is not None and t0 < r.t <= t1]
-            if any(b <= a - 1 for a, b in zip(vals, vals[1:])):
+            if any(_ran(a, b) for a, b in zip(vals, vals[1:])):
                 return True
         return False
 
