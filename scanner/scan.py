@@ -11,8 +11,10 @@ web/data/games.json for the static web app.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -21,6 +23,7 @@ from pathlib import Path
 
 import chess
 import cv2
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -91,6 +94,55 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     g.add_argument("--no-speedrun", dest="speedrun", action="store_false",
                    help="tag the games as not speedrun games")
     return p.parse_args(argv)
+
+
+def code_stamp(*modules) -> str:
+    """Fingerprint of the modules a cached reading came from: a cache made by
+    other code is read again, never reused."""
+    h = hashlib.sha256()
+    for m in modules:
+        h.update(Path(m.__file__).read_bytes())
+    return h.hexdigest()[:16]
+
+
+def _model_file(video_id: str) -> Path:
+    return download.CACHE / f"{video_id}-model.npz"
+
+
+def load_model(video_id: str, readings_box) -> "recognize.BoardModel | None":
+    """The piece templates a --from-readings run calibrated before for these
+    readings, if the board and template code is unchanged: finding them means
+    decoding the video up to its first opening position and locating the
+    board again (most of a cached rescan's time)."""
+    f = _model_file(video_id)
+    if not f.exists():
+        return None
+    with np.load(f, allow_pickle=False) as z:
+        meta = json.loads(str(z["meta"]))
+        if meta.get("code") != code_stamp(recognize, board_detect) or meta.get("box") != list(readings_box):
+            return None
+        return recognize.BoardModel(temps=z["temps"], masks=z["masks"], empty=z["empty"] if "empty" in z else None,
+                                    **{k: v for k, v in meta["fields"].items()})
+
+
+def save_model(video_id: str, readings_box, model: "recognize.BoardModel") -> None:
+    fields = {k: getattr(model, k) for k in ("piece_of", "flipped", "occ_thresh", "occ_diff", "match_thresh", "n_base")}
+    fields = {k: (list(v) if k == "piece_of" else v.item() if hasattr(v, "item") else v) for k, v in fields.items()}
+    arrays = {"temps": model.temps, "masks": model.masks}
+    if model.empty is not None:
+        arrays["empty"] = model.empty
+    meta = {"code": code_stamp(recognize, board_detect), "box": list(readings_box), "fields": fields}
+    f = _model_file(video_id)
+    tmp = f.with_name(f.stem + ".tmp.npz")
+    np.savez(tmp, meta=json.dumps(meta), **arrays)
+    os.replace(tmp, f)
+
+
+def write_json(path: Path, data) -> None:
+    """Temp file + rename, so an interrupted write can't leave a cut-off cache."""
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data))
+    os.replace(tmp, path)
 
 
 def iter_frames(path: Path, fps: float, start: float, end: float):
@@ -212,7 +264,7 @@ def _overlaps(a, b) -> bool:
     return inter >= 0.5 * min(a.w * a.h, b.w * b.h)
 
 
-def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> None:
+def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game], cache: dict | None = None) -> None:
     """Best-effort: read each game's own on-screen clock(s) over just that
     game's video window - bounded memory regardless of how long the source
     video is, unlike decoding the whole thing into clock_read at once.
@@ -222,43 +274,92 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game]) -> Non
     reading next to a real move is far less harmful than a wrong one, and
     clock_read.py is already deliberately conservative about reporting a
     value at all (see its module docstring).
+
+    cache (scanner/cache/<id>-clocks.json, kept by main) holds what was read
+    before - the clock regions and screening reads of each window, and each
+    region's raw readings from each window start - so a rerun decodes and
+    reads only the windows that changed, with the same result.
     """
+    cache = {} if cache is None else cache
+    for k in ("times", "regions", "early", "screen", "full"):
+        cache.setdefault(k, {})
     for g in games:
         if not g.move_seconds:
             continue
-        start = max(0.0, g.start_seconds - 1.0)
-        end = g.move_seconds[-1] + 3.0
-        frames, times = [], []
-        for ts, frame in iter_frames(path, 1.0, start, end):
-            frames.append(frame)
-            times.append(ts)
-        if len(frames) < CLOCK_MIN_FRAMES:
+        # on whole seconds, so a game that ends a ply later shares a window start
+        start = float(max(0, math.floor(g.start_seconds - 1.0)))
+        end = float(math.ceil(g.move_seconds[-1] + 3.0))
+        win = f"{start:.0f}-{end:.0f}"
+        decoded: list = []
+
+        def window():
+            if not decoded:
+                fr, tm = [], []
+                for ts, frame in iter_frames(path, 1.0, start, end):
+                    fr.append(frame)
+                    tm.append(ts)
+                decoded.append(fr)
+                cache["times"][win] = tm
+            return decoded[0]
+
+        if win not in cache["times"]:
+            window()
+        times = cache["times"][win]
+        if len(times) < CLOCK_MIN_FRAMES:
             continue
+
+        def boxes(rows):
+            return [clock_read.ClockBox(*r) for r in rows]
+
+        def rows(cboxes):
+            return [[int(c.x), int(c.y), int(c.w), int(c.h)] for c in cboxes]
 
         # Screen every candidate on a sample of frames, then read only the
         # chosen clocks in full - OCR per frame is the slow part.
-        step = max(1, len(frames) // CLOCK_SCREEN_FRAMES)
-        sample_f, sample_t = frames[::step], times[::step]
+        step = max(1, len(times) // CLOCK_SCREEN_FRAMES)
         # Over a long game other changing UI near a clock (a chat, a stream
         # timer) can merge with it into one wide blob that reads nothing
         # (confirmed on a stream: the top clock was found over the first
         # four minutes and lost over the whole game). Pool the candidates
         # from the whole window and from its opening minutes.
-        cands = list(clock_read.find_clock_regions(frames, board_box, max_regions=CLOCK_MAX_CANDIDATES))
-        if len(frames) > CLOCK_EARLY_FRAMES:
-            for cbox in clock_read.find_clock_regions(frames[:CLOCK_EARLY_FRAMES], board_box,
-                                                      max_regions=CLOCK_MAX_CANDIDATES):
+        if win not in cache["regions"]:
+            cache["regions"][win] = rows(clock_read.find_clock_regions(window(), board_box,
+                                                                       max_regions=CLOCK_MAX_CANDIDATES))
+        cands = boxes(cache["regions"][win])
+        if len(times) > CLOCK_EARLY_FRAMES:
+            early = f"{start:.0f}"
+            if early not in cache["early"]:
+                cache["early"][early] = rows(clock_read.find_clock_regions(window()[:CLOCK_EARLY_FRAMES], board_box,
+                                                                           max_regions=CLOCK_MAX_CANDIDATES))
+            for cbox in boxes(cache["early"][early]):
                 if not any(_overlaps(cbox, c) for c in cands):
                     cands.append(cbox)
-        screened = [(cbox, clock_read.read_clock_ocr(sample_f, sample_t, cbox, reject_outliers=False))
-                    for cbox in cands]
+
+        def screen(cbox):
+            key = f"{cbox.x},{cbox.y},{cbox.w},{cbox.h}@{win}"
+            if key not in cache["screen"]:
+                rd = clock_read.read_clock_ocr(window()[::step], times[::step], cbox, reject_outliers=False)
+                cache["screen"][key] = [[r.t, r.seconds] for r in rd]
+            return [clock_read.ClockReading(t, v) for t, v in cache["screen"][key]]
+
+        def full(cbox):
+            # a region's raw readings from a window start; a shorter window's are their first part
+            key = f"{cbox.x},{cbox.y},{cbox.w},{cbox.h}@{start:.0f}"
+            got = cache["full"].get(key, [])
+            if [t for t, _ in got[:len(times)]] != times:
+                got = [[r.t, r.seconds] for r in clock_read.read_clock_ocr_raw(window(), times, cbox)]
+                if len(got) > len(cache["full"].get(key, [])):
+                    cache["full"][key] = got
+            return clock_read.clean_readings([clock_read.ClockReading(t, v) for t, v in got[:len(times)]])
+
+        screened = [(cbox, screen(cbox)) for cbox in cands]
         box_for = {id(rd): cbox for cbox, rd in screened}
         full_for: dict[int, list] = {}
         while True:
             chosen = clock_read.assign_clock_sides(screened, board_box, g.flipped, CLOCK_MIN_COVERAGE)
             for rd in chosen.values():
                 if id(rd) not in full_for:
-                    full_for[id(rd)] = clock_read.read_clock_ocr(frames, times, box_for[id(rd)])
+                    full_for[id(rd)] = full(box_for[id(rd)])
             # A player's clock stops on every opponent move; a countdown
             # that runs for most of the game is something else (see
             # clock_read.longest_tick_share).
@@ -343,6 +444,9 @@ def annotate_ratings(src: download.Source, box, games: list[reconstruct.Game]) -
         ]
         seen: list[float] = []
         for t in candidates:
+            # on whole seconds: the fetched frames are cached by timestamp, and a
+            # move time read at 6 fps would otherwise fetch a new one on every rescan
+            t = float(round(t))
             if not any(abs(t - s) < 1.0 for s in seen):
                 seen.append(t)
 
@@ -467,7 +571,14 @@ def main(argv: list[str]) -> int:
             print(f"      transcript: failed ({e!s:.80})")
 
     print("[2/6] locating board")
-    if args.crop:
+    saved = download.CACHE / f"{src.video_id}-readings.json"
+    reuse = args.from_readings and saved.exists() and not args.start and not args.end
+    data = json.loads(saved.read_text()) if reuse else None
+    model = load_model(src.video_id, data["box"]) if reuse and not args.crop and not args.calibrate else None
+    if model is not None:
+        box = board_detect.Box(*data["box"], score=1.0)
+        print("      as the saved readings (piece templates cached)")
+    elif args.crop:
         x, y, w, h = (int(v) for v in args.crop.split(","))
         box = board_detect.Box(x, y, w, h, score=1.0)
     else:
@@ -489,19 +600,19 @@ def main(argv: list[str]) -> int:
         print(f"      wrote {out}")
         return 0
 
-    saved = download.CACHE / f"{src.video_id}-readings.json"
-    if args.from_readings and saved.exists() and not args.start and not args.end:
+    if reuse:
         print(f"[3/6] reusing the readings in {saved.name}")
-        data = json.loads(saved.read_text())
         readings = [(ts, pl) for ts, pl in data["readings"]]
         recognize.TUNE_GRID = data.get("tune_grid", 0.0)    # fit the box as the scan that saved them did
-        # the piece templates aren't saved: calibrate them again on the first opening frame
-        model = None
-        for ts, frame in iter_frames(src.path, args.fps, 0.0, 0.0):
-            if recognize.looks_like_start(recognize.occupancy(frame, box)):
-                model, _ = recognize.calibrate_from_start(frame, box)
-                if model is not None:
-                    break
+        if model is None:
+            # calibrate the piece templates again on the first opening frame, and keep them
+            for ts, frame in iter_frames(src.path, args.fps, 0.0, 0.0):
+                if recognize.looks_like_start(recognize.occupancy(frame, box)):
+                    model, _ = recognize.calibrate_from_start(frame, box)
+                    if model is not None:
+                        break
+            if model is not None and not args.crop:
+                save_model(src.video_id, data["box"], model)
         box = board_detect.Box(*data["box"], score=1.0)
     else:
         print(f"[3/6] scanning frames @ {args.fps} fps")
@@ -541,16 +652,18 @@ def main(argv: list[str]) -> int:
         os.replace(tmp, cached)
     print(f"      {len(readings)} frames, {sum(1 for _, p in readings if p)} with a readable board")
 
-    if not args.no_stall_reread and not args.start and not args.end:
-        # the frames re-read are kept, so a --from-readings run doesn't decode them again
-        stalls = download.CACHE / f"{src.video_id}-stalls.json"
-        cache = json.loads(stalls.read_text()) if stalls.exists() else {}
-        n = len(cache.get("ranges", []))
-        readings = refine.reread_stalls(src.path, box, model, readings, iter_frames, log=print, cache=cache)
-        if len(cache.get("ranges", [])) > n:
-            tmp = stalls.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(cache))
-            os.replace(tmp, stalls)
+    # 6 fps frames, shared by the stall and fast-move re-reads and kept (for
+    # a whole video), so a --from-readings run decodes only frames it hasn't read
+    whole = not args.start and not args.end
+    dense_file = download.CACHE / f"{src.video_id}-dense.json"
+    dense = refine.DenseFrames(src.path, box, model, iter_frames, stamp=code_stamp(recognize),
+                               cache=json.loads(dense_file.read_text()) if whole and dense_file.exists() else None)
+    stalls = download.CACHE / f"{src.video_id}-stalls.json"
+    if whole and not dense.frames and stalls.exists():
+        # frames the stall re-read kept before the shared cache (same box and reading code)
+        dense.added += dense.adopt_stalls(json.loads(stalls.read_text()))
+    if not args.no_stall_reread and whole:
+        readings = refine.reread_stalls(readings, dense, log=print)
 
     print("[4/6] reconstructing games")
     raw = dict(readings)
@@ -558,16 +671,27 @@ def main(argv: list[str]) -> int:
     games = reconstruct.reconstruct(readings, raw=raw)
     kept = [g for g in games if g.confidence >= args.min_confidence and g.ply >= args.min_ply]
     if not args.no_refine:
-        split = sum(refine.refine_game(src.path, box, model, g, iter_frames) for g in kept)
+        split = sum(refine.refine_game(g, dense) for g in kept)
         print(f"      re-read fast-move moments at {refine.DENSE_FPS} fps: {split} plies seen on their own")
     print(f"      {len(games)} games found, {len(kept)} kept "
           f"(confidence >= {args.min_confidence}, >= {args.min_ply} plies)")
+    if whole and dense.added:
+        write_json(dense_file, dense.to_json())
 
     if args.no_clocks:
         print("[5/6] reading clocks - skipped (--no-clocks)")
     else:
         print("[5/6] reading clocks")
-        annotate_clocks(src.path, box, kept)
+        # what each window read is kept, keyed by the board box and the clock code
+        clocks_file = download.CACHE / f"{src.video_id}-clocks.json"
+        key = {"box": [int(v) for v in box.as_tuple()], "code": code_stamp(clock_read)}
+        clocks = json.loads(clocks_file.read_text()) if whole and clocks_file.exists() else {}
+        if any(clocks.get(k) != v for k, v in key.items()):
+            clocks = dict(key)
+        before = json.dumps(clocks, sort_keys=True)
+        annotate_clocks(src.path, box, kept, cache=clocks)
+        if whole and json.dumps(clocks, sort_keys=True) != before:
+            write_json(clocks_file, clocks)
         n_clocked = sum(1 for g in kept if g.clock_white_seconds or g.clock_black_seconds)
         print(f"      clock data for {n_clocked}/{len(kept)} games")
 

@@ -17,6 +17,8 @@ order differed - stays bunched, and trust.py keeps not trusting it.
 """
 from __future__ import annotations
 
+import math
+import subprocess
 from pathlib import Path
 
 import chess
@@ -29,6 +31,74 @@ MIN_BUNCH = 2          # plies confirmed together that are worth re-reading
 STABLE_FRAMES = 2      # a dense placement must repeat this often to count
 WINDOW_PAD = 3.0       # seconds either side of a bunch to re-read: its 1 fps time comes
                        # from a +-2 frame vote, so the moves can sit a couple of seconds off
+GAP_FILL = 2.0         # decode across a gap this short between frames still to read, rather than seek twice
+
+
+class DenseFrames:
+    """One video's board readings at DENSE_FPS, on the fixed grid k / DENSE_FPS
+    seconds, read once and kept (scanner/cache/<id>-dense.json): the stall
+    re-read and the fast-move re-read share them, and a window that moved a
+    little between runs - a game that ends a ply later - decodes only the
+    frames it hasn't seen. A cache read with another board box or other
+    recognize.py code is ignored.
+
+    A frame's placement is None where it can't be trusted (low confidence or
+    an implausible piece count); the raw board orientation is kept, callers
+    flip it."""
+
+    def __init__(self, path: Path | None, box, model, iter_frames, cache: dict | None = None, stamp: str = ""):
+        self.path, self.box, self.model, self.iter_frames = path, box, model, iter_frames
+        key = {"box": [int(v) for v in (box.as_tuple() if hasattr(box, "as_tuple") else box)] if box else None,
+               "fps": DENSE_FPS, "code": stamp}
+        cache = cache or {}
+        self.frames: dict[int, str | None] = (
+            {int(k): v for k, v in cache.get("frames", {}).items()} if all(cache.get(k) == v for k, v in key.items()) else {})
+        self.key, self.added = key, 0
+
+    def to_json(self) -> dict:
+        return {**self.key, "frames": {str(k): v for k, v in sorted(self.frames.items())}}
+
+    def read(self, a: float, b: float) -> list[tuple[float, str | None]]:
+        """(timestamp, placement) for every grid frame in [a, b]."""
+        ks = range(max(0, math.ceil(a * DENSE_FPS - 1e-6)), math.floor(b * DENSE_FPS + 1e-6) + 1)
+        todo = [k for k in ks if k not in self.frames]
+        runs: list[list[int]] = []
+        for k in todo:
+            if runs and k - runs[-1][1] <= GAP_FILL * DENSE_FPS:
+                runs[-1][1] = k
+            else:
+                runs.append([k, k])
+        for k0, k1 in runs:
+            try:
+                # to the next grid frame: ffmpeg fails on a window too short to hold a frame
+                for i, (_, frame) in enumerate(self.iter_frames(self.path, DENSE_FPS, k0 / DENSE_FPS, (k1 + 1) / DENSE_FPS)):
+                    if k0 + i > k1:
+                        break
+                    rd = recognize.read_board(frame, self.box, self.model)
+                    ok = rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34
+                    self.frames[k0 + i] = rd.placement if ok else None
+            except subprocess.CalledProcessError:
+                pass                              # nothing decodable there (past the video's end)
+            for k in range(k0, k1 + 1):          # past the video's end: nothing to read
+                self.frames.setdefault(k, None)
+            self.added += k1 - k0 + 1
+        return [(round(k / DENSE_FPS, 3), self.frames[k]) for k in ks]
+
+    def covers(self, a: float, b: float) -> bool:
+        return all(k in self.frames for k in range(max(0, math.ceil(a * DENSE_FPS - 1e-6)),
+                                                     math.floor(b * DENSE_FPS + 1e-6) + 1))
+
+    def adopt_stalls(self, stalls: dict) -> int:
+        """Take in the frames of an older <id>-stalls.json (read at STALL_FPS
+        from each stall's start, which falls on the grid wherever the stall's
+        last ply was confirmed on a whole second or a 6 fps frame)."""
+        n = 0
+        for ts, pl in stalls.get("frames", []):
+            k = round(ts * DENSE_FPS)
+            if abs(ts * DENSE_FPS - k) < 0.01 and k not in self.frames:
+                self.frames[k] = pl
+                n += 1
+        return n
 
 
 def _bunches(move_seconds: list[float]) -> list[tuple[int, int]]:
@@ -87,7 +157,7 @@ def split_bunch(path_placements: list[str], dense: list[tuple[float, str]],
     return times if len(set(times)) == len(times) else None
 
 
-def refine_game(path: Path, box, model, game: reconstruct.Game, iter_frames) -> int:
+def refine_game(game: reconstruct.Game, frames: DenseFrames) -> int:
     """Split what bunches the dense frames allow; returns how many plies got
     their own confirmation time."""
     improved = 0
@@ -104,11 +174,8 @@ def refine_game(path: Path, box, model, game: reconstruct.Game, iter_frames) -> 
             board.push_san(san)
             path_placements.append(reconstruct._placement_of(board))
 
-        dense: list[tuple[float, str]] = []
-        for ts, frame in iter_frames(path, DENSE_FPS, max(0.0, t_begin - WINDOW_PAD), t_end + WINDOW_PAD):
-            rd = recognize.read_board(frame, box, model)
-            if rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34:
-                dense.append((ts, rd.placement[::-1] if game.flipped else rd.placement))
+        dense = [(ts, pl[::-1] if game.flipped else pl)
+                 for ts, pl in frames.read(max(0.0, t_begin - WINDOW_PAD), t_end + WINDOW_PAD) if pl]
         times = split_bunch(path_placements, dense, t_end)
         if times is None:
             continue
@@ -126,7 +193,7 @@ def refine_game(path: Path, box, model, game: reconstruct.Game, iter_frames) -> 
     return improved
 
 
-STALL_FPS = 6          # frames per second when re-reading a stall
+STALL_FPS = DENSE_FPS  # frames per second when re-reading a stall (the same grid as the fast-move re-read)
 STALL_PRE = 4.0        # seconds before a stalled game's last ply to re-read (its last bunch)
 STALL_POST = 25.0      # ...and after it: the misses that closed the game
 STALL_ROUNDS = 2       # re-read the stalls a second reconstruction still has
@@ -143,22 +210,14 @@ def _stalls(readings: list[tuple[float, str | None]], raw: dict | None = None) -
     return out
 
 
-def reread_stalls(path: Path, box, model, readings: list[tuple[float, str | None]], iter_frames,
-                  log=lambda msg: None, cache: dict | None = None) -> list[tuple[float, str | None]]:
+def reread_stalls(readings: list[tuple[float, str | None]], frames: DenseFrames,
+                  log=lambda msg: None) -> list[tuple[float, str | None]]:
     """A game closed on too many misses usually went off track on moves played
     faster than the 1 fps readings can follow: each reading is a position a
     ply or two further on, and the flicker vote blends consecutive ones into
     boards that never existed. Read each such stretch again at STALL_FPS and
     put those frames in place of the 1 fps ones, so reconstruction sees every
-    position on the way. Returns the raw readings with the dense stretches in.
-
-    cache ({"ranges": [[a, b], ...], "frames": [[ts, placement], ...]}, kept
-    by scan.py next to the readings) holds the stretches read before; one
-    inside a cached range is taken from it instead of decoding the video
-    again, and newly read ones are added to it."""
-    if cache is not None:
-        cache.setdefault("ranges", [])
-        cache.setdefault("frames", [])
+    position on the way. Returns the raw readings with the dense stretches in."""
     done: list[tuple[float, float]] = []
     for _ in range(STALL_ROUNDS):
         new = [(max(0.0, t - STALL_PRE), t + STALL_POST) for t in _stalls(readings, dict(readings))
@@ -166,18 +225,8 @@ def reread_stalls(path: Path, box, model, readings: list[tuple[float, str | None
         if not new:
             break
         for a, b in new:
-            dense: list[tuple[float, str | None]] = []
-            cached = cache is not None and any(ca <= a and b <= cb for ca, cb in cache["ranges"])
-            if cached:
-                dense = [(ts, pl) for ts, pl in cache["frames"] if a <= ts <= b]
-            else:
-                for ts, frame in iter_frames(path, STALL_FPS, a, b):
-                    rd = recognize.read_board(frame, box, model)
-                    ok = rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34
-                    dense.append((round(ts, 3), rd.placement if ok else None))
-                if cache is not None:
-                    cache["ranges"].append([a, b])
-                    cache["frames"] += dense
+            cached = frames.covers(a, b)
+            dense = frames.read(a, b)
             readings = [r for r in readings if not a <= r[0] <= b] + dense
             readings.sort(key=lambda r: r[0])
             log(f"      re-read the stall at {a:.0f}-{b:.0f}s at {STALL_FPS} fps{' (cached)' if cached else ''}")

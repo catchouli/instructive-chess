@@ -1095,6 +1095,22 @@ def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
     old per-glyph classifier, but not perfect, and that check is generic
     over any ClockReading sequence regardless of how it was produced.
     """
+    readings = read_clock_ocr_raw(frames, times, box)
+    # The outlier pass assumes ~1s between frames; callers screening a
+    # sparse sample (just "does this region read as a clock?") turn it off.
+    return clean_readings(readings) if reject_outliers else readings
+
+
+def clean_readings(readings: list[ClockReading]) -> list[ClockReading]:
+    """read_clock_ocr's checks over a whole 1 fps sequence of raw readings."""
+    return _physically_consistent(_reject_outliers(readings))
+
+
+def read_clock_ocr_raw(frames: list[np.ndarray], times: list[float], box: ClockBox) -> list[ClockReading]:
+    """read_clock_ocr's per-frame values, before the sequence checks. Each
+    depends only on the frames before it (an unchanged crop repeats the last
+    value read), so the readings of a longer window start with those of a
+    shorter one from the same first frame."""
     readings = []
     prev_crop, prev_seconds = None, None
     for t, frame in zip(times, frames):
@@ -1120,9 +1136,7 @@ def read_clock_ocr(frames: list[np.ndarray], times: list[float], box: ClockBox,
             seconds = _ocr_seconds(wide)
         prev_seconds = seconds
         readings.append(ClockReading(t=t, seconds=seconds))
-    # The outlier pass assumes ~1s between frames; callers screening a
-    # sparse sample (just "does this region read as a clock?") turn it off.
-    return _physically_consistent(_reject_outliers(readings)) if reject_outliers else readings
+    return readings
 
 
 def read_clock(frames: list[np.ndarray], times: list[float], box: ClockBox) -> list[ClockReading]:
@@ -1588,9 +1602,13 @@ def live_move_count(move_times: list[float], readings_by_side: dict[str, list[Cl
     def runs_after(t: float) -> bool:
         # A running clock goes *down*: a rise after the game is over (a new
         # game's clock appearing, a results screen - confirmed on a real
-        # video, 433 -> 439 after the last move) must not count.
+        # video, 433 -> 439 after the last move) must not count. From the
+        # first 1 fps clock frame after the move: a move timed between
+        # whole seconds at 6 fps (130.33) with ">= t + 1" skipped the frame
+        # at 131 and lost the one tick before a quick resignation, dropping
+        # the game's last move (41 games on 315 videos).
         for readings in readings_by_side.values():
-            vals = [r.seconds for r in readings if r.seconds is not None and r.t >= t + 1.0]
+            vals = [r.seconds for r in readings if r.seconds is not None and r.t > t + 0.5]
             if any(b <= a - 1 for a, b in zip(vals, vals[1:])):
                 return True
         return False
