@@ -171,6 +171,20 @@ def _placement_of(board: chess.Board) -> str:
     return "".join(out)
 
 
+_CASTLE_ROOK = {chess.G1: (chess.H1, chess.F1), chess.C1: (chess.A1, chess.D1),
+                chess.G8: (chess.H8, chess.F8), chess.C8: (chess.A8, chess.D8)}
+
+
+def _changed_squares(board: chess.Board, mv: chess.Move) -> tuple:
+    """The squares a move changes (before it's pushed): from and to, a
+    castling rook's two, an en passant capture's pawn."""
+    if board.is_castling(mv):
+        return (mv.from_square, mv.to_square) + _CASTLE_ROOK[mv.to_square]
+    if board.is_en_passant(mv):
+        return mv.from_square, mv.to_square, mv.to_square + (-8 if board.turn == chess.WHITE else 8)
+    return mv.from_square, mv.to_square
+
+
 def _hamming(a: str, b: str) -> int:
     return sum(1 for x, y in zip(a, b) if x != y)
 
@@ -317,8 +331,34 @@ def _has_wasted_round_trip(board: chess.Board, path: list[chess.Move]) -> bool:
     return any(cur == orig for cur, orig in origin.items())
 
 
+_SEARCHES: dict = {}          # (position, target, depth, budget, alternatives?) -> result, alternatives found
+_SEARCHES_MAX = 200_000
+
+
 def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int = NODE_BUDGET,
                    alternatives: list | None = None):
+    """_search, remembered: the stall re-read (refine.reread_stalls) runs
+    reconstruction twice more over mostly the same readings, which asked the
+    same questions again. A search depends only on the position (not how it
+    was reached), so the remembered answer is the one it would give."""
+    if alternatives:                      # filled already: not a question asked before
+        return _search(board, target, max_depth, budget, alternatives)
+    key = (" ".join(board.fen().split()[:4]), target, max_depth, budget, alternatives is not None)
+    hit = _SEARCHES.get(key)
+    if hit is None:
+        found: list | None = [] if alternatives is not None else None
+        result = _search(board, target, max_depth, budget, found)
+        if len(_SEARCHES) >= _SEARCHES_MAX:
+            _SEARCHES.clear()
+        hit = _SEARCHES[key] = (result, found)
+    (moves, info), found = hit
+    if alternatives is not None:
+        alternatives.extend(list(p) for p in found)
+    return (list(moves) if isinstance(moves, list) else moves), info
+
+
+def _search(board: chess.Board, target: str, max_depth: int, budget: int = NODE_BUDGET,
+            alternatives: list | None = None):
     """Moves from *board* that we can be sure of on the way to placement *target*.
 
     An exact match (hamming 0) at any depth always wins over a merely-close one
@@ -344,8 +384,12 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
     Bg5 and Bg5 Qf6 reach the same position) is only told apart by the
     readings skipped on the way, see _pick_path.
     """
-    relevant = _relevant_squares(_placement_of(board), target)
-    frontier = [(board.copy(stack=False), [])]
+    start = _placement_of(board)
+    relevant = _relevant_squares(start, target)
+    # each node keeps its placement and its distance to the target: a move
+    # changes 2-4 squares, so a child's are updated on those alone (building
+    # and comparing all 64 squares per node was most of reconstruction's time)
+    frontier = [(board.copy(stack=False), [], start, _hamming(start, target))]
     fallback: tuple[int, list[chess.Move]] | None = None
     fuzzy_routes: tuple[int, list[list[chess.Move]]] | None = None
     winner = None            # (moves, depth) once exact paths are found
@@ -353,7 +397,8 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
         nxt = []
         exact = []                        # paths reaching hamming == 0
         fuzzy = []                         # (hamming, path), 0 < hamming <= FUZZ
-        for b, path in frontier:
+        last = depth == max_depth          # nodes found now are never expanded
+        for b, path, pl, dist in frontier:
             for mv in b.legal_moves:
                 if mv.from_square not in relevant and mv.to_square not in relevant:
                     continue               # can't help - prune (see _relevant_squares)
@@ -364,8 +409,16 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
                     if fallback:
                         return fallback[1], fallback[0]
                     return None, "budget"
+                changed = _changed_squares(b, mv)
                 b.push(mv)
-                ham = _hamming(_placement_of(b), target)
+                ham, cpl = dist, pl
+                for sq in changed:
+                    i = sq ^ 56
+                    pc = b.piece_at(sq)
+                    ch = pc.symbol() if pc else "."
+                    ham += (ch != target[i]) - (pl[i] != target[i])
+                    if not last:
+                        cpl = cpl[:i] + ch + cpl[i + 1:]
                 if ham == 0:
                     exact.append(path + [mv])
                 else:
@@ -374,7 +427,7 @@ def _find_sequence(board: chess.Board, target: str, max_depth: int, budget: int 
                     # even a fuzzy match keeps going: it's only a fallback
                     # candidate, and a deeper exact match must still win if
                     # there is one (see docstring)
-                    nxt.append((b.copy(stack=False), path + [mv]))
+                    nxt.append((None if last else b.copy(stack=False), path + [mv], cpl, ham))
                 b.pop()
         if exact:
             exact = [p for p in exact if not _has_wasted_round_trip(board, p)]
