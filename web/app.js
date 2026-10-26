@@ -45,10 +45,15 @@ const els = {
   sbFlip: document.getElementById('sb-flip'),
   sbArrows: document.getElementById('sb-arrows'),
   sbNext: document.getElementById('sb-next'),
+  sbEngine: document.getElementById('sb-engine'),
+  sbLichess: document.getElementById('sb-lichess'),
+  searchBoard: document.getElementById('search-board'),
 };
 
 const NEXT_SHOWN = 8;   // database moves shown as arrows / in the list
 let board = null;       // the search board (chessground)
+let searchFen = new Chess().fen();
+let onSearchPosition = () => {};   // the search board's engine panel hook
 
 let GAMES = [];
 
@@ -81,7 +86,11 @@ async function init() {
   });
   els.sbBack.addEventListener('click', () => setQuerySans(parseQuery(els.query.value).sans.slice(0, -1)));
   els.sbReset.addEventListener('click', () => setQuerySans([]));
-  els.sbFlip.addEventListener('click', () => board.toggleOrientation());
+  els.sbFlip.addEventListener('click', () => { board.toggleOrientation(); showSearchLichess(); });
+  els.sbEngine.append(enginePanel((d) => (onSearchPosition = d), () => searchFen, els.searchBoard));
+  els.searchBoard.addEventListener('toggle', () => {
+    if (!els.searchBoard.open) els.searchBoard.dispatchEvent(new Event('engine-close'));
+  });
   els.sbArrows.addEventListener('change', render);
   els.sbNext.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-san]');
@@ -150,8 +159,19 @@ function drawSearchBoard(sans, matched) {
     movable: { color: turn, dests: legalDests(chess) },
   });
   board.setAutoShapes(shapes);
+  if (chess.fen() !== searchFen) { searchFen = chess.fen(); onSearchPosition(); }
+  showSearchLichess();
   els.sbNext.innerHTML = next.map(([san, n]) =>
     `<li><button type="button" data-san="${escapeHtml(san)}">${escapeHtml(san)}</button> <span>${n} game${n === 1 ? '' : 's'}</span></li>`).join('');
+}
+
+function showSearchLichess() {
+  els.sbLichess.href = lichessUrl(searchFen, board.state.orientation);
+}
+
+/** The lichess analysis board at a position. */
+function lichessUrl(fen, color = 'white') {
+  return `https://lichess.org/analysis/${fen.replace(/ /g, '_')}?color=${color}`;
 }
 
 // The search and filters live in the URL hash (#q=...&pov=white&min=2000&tags=speedrun,blitz)
@@ -208,6 +228,8 @@ function byNewest(a, b) {
   return d || (a.start_seconds || 0) - (b.start_seconds || 0);
 }
 
+let cards = new Map();   // game id -> its card, kept across searches so an open board stays open
+
 function render() {
   const raw = els.query.value;
   writeHash();
@@ -238,17 +260,28 @@ function render() {
   }
 
   els.results.innerHTML = '';
+  const kept = new Map();
+  for (const g of shown) {
+    const key = g.id || `${g.video_id}@${g.start_seconds}`;
+    const c = cards.get(key) || card(g);
+    c.sync(sans.length);     // each game's board follows the search board's position
+    kept.set(key, c);
+    els.results.append(c.li);
+  }
+  for (const [key, c] of cards) if (!kept.has(key)) c.close();
+  cards = kept;
   if (!shown.length) {
     const li = document.createElement('li');
     li.className = 'empty';
     li.textContent = GAMES.length ? 'No games match those moves.' : '';
     els.results.append(li);
-    return;
   }
-  for (const g of shown) els.results.append(card(g, sans.length));
 }
 
-function card(g, hl) {
+/** A game's card: {li, sync(ply) - show the position after `ply` moves and
+ *  mark them in the summary, close()}. Stepping through the game's own board
+ *  changes nothing else; the next search moves it again. */
+function card(g) {
   const li = document.createElement('li');
   const d = document.createElement('details');
   d.className = 'card';
@@ -275,16 +308,30 @@ function card(g, hl) {
       ${speedrunPill}
     </span>
     <span class="meta">${escapeHtml(g.channel || 'Unknown')}${sideNote}${g.published ? ' · ' + g.published : ''}</span>
-    <span class="moves-inline">${inlineMoves(g.moves_san, hl)}</span>`;
+    <span class="moves-inline"></span>`;
   d.append(summary);
 
+  let hl = 0;
+  let go = null;   // the built board's stepper
   d.addEventListener('toggle', () => {
-    if (d.open && !d.dataset.built) { d.append(detail(g)); d.dataset.built = '1'; }
+    if (d.open && !go) {
+      const el = detail(g, hl);
+      go = el.go;
+      d.append(el);
+    }
     if (!d.open) d.querySelector('.detail')?.dispatchEvent(new Event('engine-close'));
   });
 
   li.append(d);
-  return li;
+  return {
+    li,
+    sync(ply) {
+      hl = ply;
+      summary.querySelector('.moves-inline').innerHTML = inlineMoves(g.moves_san, hl);
+      go?.(hl);
+    },
+    close() { d.querySelector('.detail')?.dispatchEvent(new Event('engine-close')); },
+  };
 }
 
 function inlineMoves(sans, hl, max = 16) {
@@ -298,7 +345,9 @@ function inlineMoves(sans, hl, max = 16) {
   return out.trim();
 }
 
-function detail(g) {
+/** A game's board, stepper, moves and engine, starting after `startPly`
+ *  moves; the returned element's go(ply) moves it. */
+function detail(g, startPly) {
   const wrap = document.createElement('div');
   wrap.className = 'detail';
   const grid = document.createElement('div');
@@ -322,6 +371,11 @@ function detail(g) {
   moveWatch.className = 'move-watch';
   moveWatch.target = '_blank';
   moveWatch.rel = 'noopener';
+  const lichess = document.createElement('a');
+  lichess.className = 'move-watch';
+  lichess.target = '_blank';
+  lichess.rel = 'noopener';
+  lichess.textContent = 'Analyse on lichess ↗';
   const clockLabel = document.createElement('div');
   clockLabel.className = 'clock-label';
   const ratingLabel = document.createElement('div');
@@ -338,13 +392,13 @@ function detail(g) {
   } else {
     ratingLabel.hidden = true;
   }
-  boardCol.append(board, nav, clockLabel, ratingLabel, moveWatch);
+  boardCol.append(board, nav, clockLabel, ratingLabel, moveWatch, lichess);
 
   const positions = replay(g.moves_san);
   const hasTimes = Array.isArray(g.move_seconds) && g.move_seconds.length === g.moves_san.length;
   const hasClocks = (Array.isArray(g.clock_white_seconds) && g.clock_white_seconds.length === g.moves_san.length) ||
     (Array.isArray(g.clock_black_seconds) && g.clock_black_seconds.length === g.moves_san.length);
-  let ply = g.moves_san.length;
+  let ply = Math.min(startPly, g.moves_san.length);
   const fens = [new Chess().fen()];
   { const c = new Chess(); for (const san of g.moves_san) { c.move(san); fens.push(c.fen()); } }
   let onPosition = () => {};   // the engine panel's hook, set below
@@ -355,6 +409,7 @@ function detail(g) {
     first.disabled = prev.disabled = ply === 0;
     next.disabled = last.disabled = ply === g.moves_san.length;
     for (const el of pgn.querySelectorAll('.ply')) el.classList.toggle('current', Number(el.dataset.ply) === ply);
+    lichess.href = lichessUrl(fens[ply]);
     if (hasTimes) {
       const t = ply === 0 ? g.start_seconds : g.move_seconds[ply - 1];
       moveWatch.href = withTimestamp(g.video_url, t);
@@ -413,6 +468,7 @@ function detail(g) {
 
   grid.append(boardCol, info);
   wrap.append(grid);
+  wrap.go = go;
   return wrap;
 }
 

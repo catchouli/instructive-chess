@@ -235,3 +235,5 @@ footer a { color: var(--accent); }
 .engine-out[hidden] { display: none; }
 .engine-out .score { font-weight: 600; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .engine-out .pv { margin-top: 4px; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+#sb-engine { margin-top: 10px; }
+#sb-lichess { display: inline-block; margin-top: 2px; }

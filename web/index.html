@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="vendor/chessground/chessground.base.css?v=5ba7d4ee9e">
 <link rel="stylesheet" href="vendor/chessground/chessground.brown.css?v=f1da7120d2">
 <link rel="stylesheet" href="vendor/chessground/chessground.cburnett.css?v=f3b56e56e4">
-<link rel="stylesheet" href="style.css?v=89632392d1">
+<link rel="stylesheet" href="style.css?v=8f1ac826aa">
 </head>
 <body>
 <header>
@@ -34,6 +34,8 @@
           <button type="button" id="sb-flip" title="flip the board">flip</button>
         </div>
         <label class="check"><input id="sb-arrows" type="checkbox" checked> Show the database's next moves</label>
+        <div id="sb-engine"></div>
+        <a id="sb-lichess" class="move-watch" target="_blank" rel="noopener">Analyse on lichess ↗</a>
         <p class="sb-hint">Play moves on the board, or type them above: they search the same way.</p>
         <ol id="sb-next" class="sb-next"></ol>
       </div>
@@ -77,6 +79,6 @@
   }
 }
 </script>
-<script type="module" src="app.js?v=96736a2d15"></script>
+<script type="module" src="app.js?v=6a2af9cea1"></script>
 </body>
 </html>
