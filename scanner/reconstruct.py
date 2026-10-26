@@ -41,6 +41,7 @@ RETRACT_ENDS_TRUST = 1.0  # moves accepted right after an undo or detour end tru
 REPLAY_SHARED = 10     # a game that opens with this many of an earlier game's plies...
 REPLAY_FAST = 14       # ...and has this many plies within REPLAY_WINDOW_S anywhere
 REPLAY_WINDOW_S = 4.0  # is the narrator stepping back through that game: dropped (0 = off)
+REPLAY_FROZEN = True   # ...as is one opening with REPLAY_SHARED of them whose clocks never ran
 RETRACT_BROWSE = False    # ...and after browsing back (3 -> 1 leaks either way for 2.5x the cost)
 BROWSE_STEP_S = 3.0       # a ply this recent that moved the board toward the earlier position the viewer
                           # then browsed to is taken back: a frame caught mid-step (0 = off)
@@ -876,16 +877,8 @@ def _went_elsewhere(pending, target: str) -> bool:
     return False
 
 
-def _is_replay(g: Game, earlier: list[Game]) -> bool:
-    """After a game the narrator often steps back through it, several plies a
-    second. At 1 fps that never formed a game, but in a stretch read again at
-    refine.STALL_FPS it does: a second copy of the game, partly misread (seen:
-    14 wrong plies trusted). Neither sign is enough alone: real games in one
-    video share up to 20 opening plies, and read at 6 fps a premoved opening
-    reaches 18 plies in 4 s. Together they were clean on 2,600 real games:
-    those sharing 10+ plies peaked at 11 plies in 4 s, the replays 17 to 29."""
-    if not REPLAY_FAST:
-        return False
+def _shared_opening(g: Game, earlier: list[Game]) -> int:
+    """The most opening plies g shares with any earlier game."""
     shared = 0
     for h in earlier:
         n = 0
@@ -894,7 +887,35 @@ def _is_replay(g: Game, earlier: list[Game]) -> bool:
                 break
             n += 1
         shared = max(shared, n)
-    if shared < REPLAY_SHARED:
+    return shared
+
+
+def is_frozen_replay(g: Game, earlier: list[Game]) -> bool:
+    """A review the narrator steps through slowly escapes _is_replay, and may
+    branch into a variation (seen: 19 plies trusted, 8 of them not played).
+    Its clocks give it away: they were read but never ran, while every real
+    game's clocks do. Among 2,262 games of a full rescan, 32 had frozen clocks;
+    the ones sharing 10+ opening plies with an earlier game were all copies of
+    it, the real games among the rest shared at most 8. Needs clocks read
+    (scan.annotate_clocks), so it runs after reconstruct()."""
+    if not REPLAY_FROZEN:
+        return False
+    sides = [[c for c in s if c is not None] for s in (g.clock_white_seconds, g.clock_black_seconds)]
+    read = [s for s in sides if s]
+    if sum(map(len, read)) < 3 or any(max(s) - min(s) > 1 for s in read):
+        return False
+    return _shared_opening(g, earlier) >= REPLAY_SHARED
+
+
+def _is_replay(g: Game, earlier: list[Game]) -> bool:
+    """After a game the narrator often steps back through it, several plies a
+    second. At 1 fps that never formed a game, but in a stretch read again at
+    refine.STALL_FPS it does: a second copy of the game, partly misread (seen:
+    14 wrong plies trusted). Neither sign is enough alone: real games in one
+    video share up to 20 opening plies, and read at 6 fps a premoved opening
+    reaches 18 plies in 4 s. Together they were clean on 2,600 real games:
+    those sharing 10+ plies peaked at 11 plies in 4 s, the replays 17 to 29."""
+    if not REPLAY_FAST or _shared_opening(g, earlier) < REPLAY_SHARED:
         return False
     ts, j = g.move_seconds, 0
     for i in range(len(ts)):

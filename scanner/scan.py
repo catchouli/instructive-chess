@@ -714,6 +714,10 @@ def main(argv: list[str]) -> int:
         annotate_clocks(src.path, box, kept, cache=clocks)
         if whole and json.dumps(clocks, sort_keys=True) != before:
             write_json(clocks_file, clocks)
+        frozen = [g for i, g in enumerate(kept) if reconstruct.is_frozen_replay(g, kept[:i])]
+        for g in frozen:
+            print(f"      t={int(g.start_seconds)}s: clocks never ran in a replay of an earlier game - dropped")
+        kept = [g for g in kept if not any(g is f for f in frozen)]
         n_clocked = sum(1 for g in kept if g.clock_white_seconds or g.clock_black_seconds)
         print(f"      clock data for {n_clocked}/{len(kept)} games")
 

@@ -111,6 +111,21 @@ def test_same_opening_played_again_is_kept():
     assert [g.moves_san for g in games] == [line, line]
 
 
+def test_slow_replay_with_frozen_clocks_is_dropped():
+    # stepped through at playing speed, a review is only told apart from a
+    # real game by its clocks: read, but never running
+    line = ITALIAN + ["Bd2", "Bxd2+", "Nbxd2", "d5"]
+    game = stream_for(line)
+    games = run(game + [(game[-1][0] + 30 + ts, p) for ts, p in stream_for(line)])
+    first, again = games
+    first.clock_white_seconds = [600 - i for i in range(len(line))]
+    again.clock_black_seconds = [189] * len(line)
+    assert not reconstruct.is_frozen_replay(first, [])
+    assert reconstruct.is_frozen_replay(again, [first])
+    again.clock_black_seconds = [189 - i for i in range(len(line))]
+    assert not reconstruct.is_frozen_replay(again, [first])
+
+
 def test_long_gap_ends_game():
     readings = stream_for(ITALIAN[:6])
     readings += [(readings[-1][0] + i, None) for i in range(1, reconstruct.GAP_FRAMES + 2)]
