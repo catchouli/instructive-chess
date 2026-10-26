@@ -384,6 +384,7 @@ def annotate_clocks(path: Path, board_box, games: list[reconstruct.Game], cache:
         keep = clock_read.live_move_count(g.move_seconds, clock_readings,
                                           lambda n: _game_over_after(g.moves_san, n))
         if keep < len(g.moves_san):
+            print(f"      t={int(g.start_seconds)}s: clocks never ran after: {' '.join(g.moves_san[keep:])}")
             g.moves_san = g.moves_san[:keep]
             g.move_seconds = g.move_seconds[:keep]
 

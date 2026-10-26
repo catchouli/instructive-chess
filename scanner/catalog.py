@@ -243,10 +243,12 @@ def _entry(source: Source, game: Game, index: int, speedrun: bool | None = None)
         entry["rating_white"] = game.rating_white
     if game.rating_black is not None:
         entry["rating_black"] = game.rating_black
-    if DROP_FINAL_BUNCH:
-        drop_final_bunch(entry)
-    if DROP_UNSETTLED:
-        drop_unsettled_tail(entry, game.settled)
+    # what each step drops is logged, so a rescan's logs say why games stop short
+    for step, on, drop in (("final bunch", DROP_FINAL_BUNCH, lambda: drop_final_bunch(entry)),
+                           ("unsettled tail", DROP_UNSETTLED, lambda: drop_unsettled_tail(entry, game.settled))):
+        tail = entry["moves_san"][:]
+        if on and drop():
+            print(f"      t={int(game.start_seconds)}s: {step} dropped: {' '.join(tail[len(entry['moves_san']):])}")
     add_trust(entry)   # last: it looks at the clock fields
     tag(entry, speedrun)
     return entry
