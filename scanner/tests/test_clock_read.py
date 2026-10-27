@@ -17,11 +17,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import game_end  # noqa: E402
+from game_end import live_move_count  # noqa: E402
 from clock_read import (  # noqa: E402
     ClockBox,
     ClockReading,
     assign_clock_sides,
-    live_move_count,
     clock_at_moves,
     _parse_clock_text,
     _physically_consistent,
@@ -669,6 +670,31 @@ def test_live_move_count_sees_a_clock_in_tenths_running():
     white = _ticking([(t, 30.0 - (min(t, 204) - 100) * 0.1) for t in range(100, 208)])
     black = _ticking([(t, 20.0) for t in range(100, 205)] + [(205, 18.1), (206, 18.1), (207, 17.3)])
     assert live_move_count(moves, {"white": white, "black": black}) == 9
+
+
+def test_live_move_count_keeps_a_mate_read_in_the_same_frame_as_the_move_before(monkeypatch):
+    # a fast finish: the last two plies read at one time, so the stretch since
+    # the ply before the mate is empty; the clocks were running just before
+    moves = [100, 110, 120, 130, 140, 150, 170, 190, 204, 204]
+    white = _ticking([(t, 300 - min(t, 203)) for t in range(100, 215)])
+    black = _ticking([(t, 400 - min(t, 150)) for t in range(100, 215)])
+    sides = {"white": white, "black": black}
+    mate = lambda n: n == 10
+    assert live_move_count(moves, sides, game_over_after=mate) == 8
+    monkeypatch.setattr(game_end, "MATE_BEFORE_S", 5.0)
+    assert live_move_count(moves, sides, game_over_after=mate) == 10
+
+
+def test_live_move_count_keeps_a_last_move_before_a_quick_resignation(monkeypatch):
+    # white thinks up to the last move at 204, black resigns at once: no clock
+    # runs after it, but one ran right up to it
+    moves = [100, 110, 120, 130, 140, 150, 170, 190, 204]
+    white = _ticking([(t, 300 - min(t, 204)) for t in range(100, 215)])
+    black = _ticking([(t, 400 - min(t, 190)) for t in range(100, 215)])
+    sides = {"white": white, "black": black}
+    assert live_move_count(moves, sides) == 8
+    monkeypatch.setattr(game_end, "LIVE_BEFORE_S", 3.0)
+    assert live_move_count(moves, sides) == 9
 
 
 def test_live_move_count_ignores_a_clock_rising_after_the_game():
