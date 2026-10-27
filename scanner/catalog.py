@@ -246,9 +246,14 @@ def _entry(source: Source, game: Game, index: int, speedrun: bool | None = None)
     # what each step drops is logged, so a rescan's logs say why games stop short
     for step, on, drop in (("final bunch", DROP_FINAL_BUNCH, lambda: drop_final_bunch(entry)),
                            ("unsettled tail", DROP_UNSETTLED, lambda: drop_unsettled_tail(entry, game.settled))):
-        tail = entry["moves_san"][:]
+        tail, times = entry["moves_san"][:], entry["move_seconds"][:]
         if on and drop():
-            print(f"      t={int(game.start_seconds)}s: {step} dropped: {' '.join(tail[len(entry['moves_san']):])}")
+            k = len(entry["moves_san"])
+            print(f"      t={int(game.start_seconds)}s: {step} dropped: {' '.join(tail[k:])}")
+            if step == "unsettled tail":
+                near = game.settle_near
+                print(f"      t={int(game.start_seconds)}s: unsettled detail: " + " ".join(
+                    f"{san}@{times[k + i]:.1f}[{near[k + i] if k + i < len(near) else '?'}]" for i, san in enumerate(tail[k:])))
     add_trust(entry)   # last: it looks at the clock fields
     tag(entry, speedrun)
     return entry

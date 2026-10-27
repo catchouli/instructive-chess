@@ -143,6 +143,9 @@ class Game:
     # ply (or within SETTLE_TAIL_S of the last)? A game's final plies that
     # never were are where reconstruction derailed (see catalog.drop_unsettled_tail)
     settled: list[bool] = field(default_factory=list)
+    # per ply, for the logs: the reading closest to it in that window - how
+    # many squares off, how many frames came that close, which squares
+    settle_near: list[str] = field(default_factory=list)
 
     @property
     def ply(self) -> int:
@@ -794,8 +797,8 @@ SETTLE_AFTER_S = float(os.environ.get("RECON_SETTLE_AFTER", "0"))
 
 
 def _settled(game: "Game", readings: list[tuple[float, str | None]],
-             raw: dict[float, str | None] | None = None) -> list[bool]:
-    """Game.settled, from the (voted) readings."""
+             raw: dict[float, str | None] | None = None, near: list[str] | None = None) -> list[bool]:
+    """Game.settled, from the (voted) readings; fills `near` (Game.settle_near) when given."""
     if SETTLE_RAW and raw:
         readings = sorted(list(readings) + [(t, p) for t, p in raw.items() if p is not None], key=lambda r: r[0])
     times = [ts for ts, _ in readings]
@@ -811,6 +814,19 @@ def _settled(game: "Game", readings: list[tuple[float, str | None]],
         t1 = max(t1, t0 + SETTLE_AFTER_S)
         lo, hi = bisect.bisect_right(times, t0), bisect.bisect_right(times, t1)
         out.append(any(readings[j][1] == here for j in range(lo, hi)))
+        if near is not None:
+            seen = [readings[j][1] for j in range(lo, hi) if readings[j][1] is not None]
+            best = min((_hamming(p, here) for p in seen), default=None)
+            if best is None:
+                near.append("none")
+            else:
+                p = next(p for p in seen if _hamming(p, here) == best)
+                sq = [k for k in range(64) if p[k] != here[k]]
+                if game.flipped:
+                    sq = [63 - k for k in sq]
+                names = ",".join(f"{chess.square_name(chess.square(k % 8, 7 - k // 8))}"
+                                 f"{here[63 - k if game.flipped else k]}>{p[63 - k if game.flipped else k]}" for k in sq[:4])
+                near.append(f"d{best}x{sum(_hamming(p, here) == best for p in seen)}:{names}")
     return out
 
 
@@ -1524,6 +1540,6 @@ def reconstruct(readings: list[tuple[float, str | None]],
         if _is_replay(g, kept):
             note(g.start_seconds, f"replay of an earlier game dropped ({g.ply} plies)")
             continue
-        g.settled = _settled(g, readings, raw)
+        g.settled = _settled(g, readings, raw, near=g.settle_near)
         kept.append(g)
     return kept
