@@ -42,24 +42,24 @@ The design notes for it are in [`ASSISTANT.md`](ASSISTANT.md).
 
 ### The catalog so far
 
-<!-- README_STATS {"games": 2455, "videos": 549, "listed": 1523, "checked": 2120, "checked_pct": 86.4, "moves": 81.4, "clocks": 80.8, "ratings": 74.8, "shown_moves": 54740, "shown_wrong": 0, "date": "2026-10-26"} -->
-**2,455 games** from **549 videos**, of which **1,523** are listed on
-the site. 2,120 of them (86.4%) have been found in the chess.com or lichess
+<!-- README_STATS {"games": 2556, "videos": 549, "listed": 1551, "checked": 2185, "checked_pct": 85.5, "moves": 77.7, "clocks": 79.5, "ratings": 74.2, "shown_moves": 55056, "shown_wrong": 0, "date": "2026-10-27"} -->
+**2,556 games** from **549 videos**, of which **1,551** are listed on
+the site. 2,185 of them (85.5%) have been found in the chess.com or lichess
 archives and checked against the real game:
 
 | Of the games checked against the real game | |
 |---|---|
-| Every move right | 81.4% |
-| Clocks: at least 95% of readings within 2 s | 80.8% |
-| Ratings: both players within 20 points | 74.8% |
-| Wrong moves shown on the site | 0 of 54,740 |
+| Every move right | 77.7% |
+| Clocks: at least 95% of readings within 2 s | 79.5% |
+| Ratings: both players within 20 points | 74.2% |
+| Wrong moves shown on the site | 0 of 55,056 |
 
 These figures cover only the games that could be found in the archives. The rest often
 couldn't be matched because the scanner read too little of the game to tell which one it
 was, so accuracy over the whole catalog is probably lower. The site shows only the moves the
 scanner is sure of, so a game with a misread move is cut short rather than shown wrong.
 
-*Last updated 2026-10-26 by `scanner/tests/readme_stats.py`.*
+*Last updated 2026-10-27 by `scanner/tests/readme_stats.py`.*
 <!-- /README_STATS -->
 
 ---
