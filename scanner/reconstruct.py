@@ -784,10 +784,12 @@ def _distinct_states(readings: list[tuple[float, str | None]], raw: dict | None 
 
 
 SETTLE_TAIL_S = 60.0   # how long after a game's last ply its position may still be read
-# A-B switches (0 = off): an exact raw frame settles a ply too (the vote can
-# blend it away), and so does an exact reading up to SETTLE_AFTER_S after the
-# ply even past the next one (the narrator stepping back to it)
-SETTLE_RAW = int(os.environ.get("RECON_SETTLE_RAW", "0"))
+# An exact raw frame settles a ply too: the vote can blend it away. Whole
+# library: read to the end 867 -> 877, right plies +66, trusted +26, no game
+# worse. Also settling on an exact reading up to SETTLE_AFTER_S after the ply,
+# past the next one (the narrator stepping back to it): at 30 s no more games
+# read to the end, and 5 lose "every move right" (0 = off).
+SETTLE_RAW = int(os.environ.get("RECON_SETTLE_RAW", "1"))
 SETTLE_AFTER_S = float(os.environ.get("RECON_SETTLE_AFTER", "0"))
 
 
