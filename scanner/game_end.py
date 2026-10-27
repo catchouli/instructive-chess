@@ -16,11 +16,16 @@ from clock_read import ClockReading
 # A ply played while a clock was running in the LIVE_BEFORE_S seconds up to
 # it was played in a live game, whatever follows it - a real last move after
 # which the opponent resigned at once leaves no clock running (0 = off).
-LIVE_BEFORE_S = float(os.environ.get("GAME_END_LIVE_BEFORE", "0"))
 # A mate ends the game when a clock ran in the MATE_BEFORE_S seconds up to
 # it (0 = only since the ply before, which is empty when both were read in
-# one frame).
-MATE_BEFORE_S = float(os.environ.get("GAME_END_MATE_BEFORE", "0"))
+# one frame). Whole-library A/B against neither (2,190 matched games):
+#   mate 5 s:              read to the end 522 -> 687, every move right -1
+#   mate 5 s + live 1.5 s: 788, -5
+#   mate 5 s + live 3 s:   867, -16 (51 wrong plies kept, none trusted)
+#   mate 5 s + live 5 s:   876, -28, and 3 complete games lost
+# with 0 wrong trusted in every arm.
+LIVE_BEFORE_S = float(os.environ.get("GAME_END_LIVE_BEFORE", "3"))
+MATE_BEFORE_S = float(os.environ.get("GAME_END_MATE_BEFORE", "5"))
 
 
 def _ran(a: float, b: float) -> bool:

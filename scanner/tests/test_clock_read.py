@@ -680,9 +680,10 @@ def test_live_move_count_keeps_a_mate_read_in_the_same_frame_as_the_move_before(
     black = _ticking([(t, 400 - min(t, 150)) for t in range(100, 215)])
     sides = {"white": white, "black": black}
     mate = lambda n: n == 10
-    assert live_move_count(moves, sides, game_over_after=mate) == 8
-    monkeypatch.setattr(game_end, "MATE_BEFORE_S", 5.0)
+    monkeypatch.setattr(game_end, "LIVE_BEFORE_S", 0.0)
     assert live_move_count(moves, sides, game_over_after=mate) == 10
+    monkeypatch.setattr(game_end, "MATE_BEFORE_S", 0.0)
+    assert live_move_count(moves, sides, game_over_after=mate) == 8
 
 
 def test_live_move_count_keeps_a_last_move_before_a_quick_resignation(monkeypatch):
@@ -692,9 +693,9 @@ def test_live_move_count_keeps_a_last_move_before_a_quick_resignation(monkeypatc
     white = _ticking([(t, 300 - min(t, 204)) for t in range(100, 215)])
     black = _ticking([(t, 400 - min(t, 190)) for t in range(100, 215)])
     sides = {"white": white, "black": black}
-    assert live_move_count(moves, sides) == 8
-    monkeypatch.setattr(game_end, "LIVE_BEFORE_S", 3.0)
     assert live_move_count(moves, sides) == 9
+    monkeypatch.setattr(game_end, "LIVE_BEFORE_S", 0.0)
+    assert live_move_count(moves, sides) == 8
 
 
 def test_live_move_count_ignores_a_clock_rising_after_the_game():
