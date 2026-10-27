@@ -264,7 +264,9 @@ function render() {
   for (const g of shown) {
     const key = g.id || `${g.video_id}@${g.start_seconds}`;
     const c = cards.get(key) || card(g);
-    c.sync(sans.length);     // each game's board follows the search board's position
+    // each game's board follows the search board's position; with no moves
+    // searched it shows where the game ends (its last trusted move)
+    c.sync(sans.length, sans.length || g.moves_san.length);
     kept.set(key, c);
     els.results.append(c.li);
   }
@@ -278,9 +280,10 @@ function render() {
   }
 }
 
-/** A game's card: {li, sync(ply) - show the position after `ply` moves and
- *  mark them in the summary, close()}. Stepping through the game's own board
- *  changes nothing else; the next search moves it again. */
+/** A game's card: {li, sync(ply, boardPly) - mark the first `ply` moves in
+ *  the summary and show the position after `boardPly` (default `ply`),
+ *  close()}. Stepping through the game's own board changes nothing else; the
+ *  next search moves it again. */
 function card(g) {
   const li = document.createElement('li');
   const d = document.createElement('details');
@@ -312,10 +315,11 @@ function card(g) {
   d.append(summary);
 
   let hl = 0;
+  let at = 0;      // the ply the board shows
   let go = null;   // the built board's stepper
   d.addEventListener('toggle', () => {
     if (d.open && !go) {
-      const el = detail(g, hl);
+      const el = detail(g, at);
       go = el.go;
       d.append(el);
     }
@@ -325,10 +329,11 @@ function card(g) {
   li.append(d);
   return {
     li,
-    sync(ply) {
+    sync(ply, boardPly = ply) {
       hl = ply;
+      at = boardPly;
       summary.querySelector('.moves-inline').innerHTML = inlineMoves(g.moves_san, hl);
-      go?.(hl);
+      go?.(at);
     },
     close() { d.querySelector('.detail')?.dispatchEvent(new Event('engine-close')); },
   };
