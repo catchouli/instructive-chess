@@ -11,6 +11,7 @@ sequence of legal moves.
 from __future__ import annotations
 
 import bisect
+import os
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -783,10 +784,18 @@ def _distinct_states(readings: list[tuple[float, str | None]], raw: dict | None 
 
 
 SETTLE_TAIL_S = 60.0   # how long after a game's last ply its position may still be read
+# A-B switches (0 = off): an exact raw frame settles a ply too (the vote can
+# blend it away), and so does an exact reading up to SETTLE_AFTER_S after the
+# ply even past the next one (the narrator stepping back to it)
+SETTLE_RAW = int(os.environ.get("RECON_SETTLE_RAW", "0"))
+SETTLE_AFTER_S = float(os.environ.get("RECON_SETTLE_AFTER", "0"))
 
 
-def _settled(game: "Game", readings: list[tuple[float, str | None]]) -> list[bool]:
+def _settled(game: "Game", readings: list[tuple[float, str | None]],
+             raw: dict[float, str | None] | None = None) -> list[bool]:
     """Game.settled, from the (voted) readings."""
+    if SETTLE_RAW and raw:
+        readings = sorted(list(readings) + [(t, p) for t, p in raw.items() if p is not None], key=lambda r: r[0])
     times = [ts for ts, _ in readings]
     board = chess.Board()
     out = []
@@ -797,6 +806,7 @@ def _settled(game: "Game", readings: list[tuple[float, str | None]]) -> list[boo
             here = here[::-1]
         t0 = game.move_seconds[i]
         t1 = game.move_seconds[i + 1] if i + 1 < len(game.move_seconds) else t0 + SETTLE_TAIL_S
+        t1 = max(t1, t0 + SETTLE_AFTER_S)
         lo, hi = bisect.bisect_right(times, t0), bisect.bisect_right(times, t1)
         out.append(any(readings[j][1] == here for j in range(lo, hi)))
     return out
@@ -1512,6 +1522,6 @@ def reconstruct(readings: list[tuple[float, str | None]],
         if _is_replay(g, kept):
             note(g.start_seconds, f"replay of an earlier game dropped ({g.ply} plies)")
             continue
-        g.settled = _settled(g, readings)
+        g.settled = _settled(g, readings, raw)
         kept.append(g)
     return kept
