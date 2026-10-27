@@ -507,3 +507,16 @@ def test_skipped_readings_pick_the_played_route_through_a_transposition():
     _hold(readings, _placement_of(board), 3, ts)
     games = run(readings)
     assert games[0].moves_san == sans + ["Bg3", "Qd7", "Bh4", "Rfd8"]
+
+
+def test_covered_square_is_one_of_our_pieces_read_empty_away_from_the_move():
+    board = chess.Board()
+    board.push_san("e4")
+    here = _placement_of(board)
+    move_squares = {chess.E2 ^ 56, chess.E4 ^ 56}
+    queen_gone = here[:chess.D1 ^ 56] + "." + here[(chess.D1 ^ 56) + 1:]
+    assert reconstruct._covered(here, queen_gone, move_squares)
+    pawn_gone = here[:chess.E4 ^ 56] + "." + here[(chess.E4 ^ 56) + 1:]
+    assert not reconstruct._covered(here, pawn_gone, move_squares)       # the move's own square
+    extra = here[:chess.E5 ^ 56] + "p" + here[(chess.E5 ^ 56) + 1:]
+    assert not reconstruct._covered(here, extra, move_squares)           # a piece where we have none

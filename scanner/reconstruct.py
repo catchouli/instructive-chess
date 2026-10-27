@@ -794,6 +794,21 @@ SETTLE_TAIL_S = 60.0   # how long after a game's last ply its position may still
 # read to the end, and 5 lose "every move right" (0 = off).
 SETTLE_RAW = int(os.environ.get("RECON_SETTLE_RAW", "1"))
 SETTLE_AFTER_S = float(os.environ.get("RECON_SETTLE_AFTER", "0"))
+# A-B switch (0 = off): a reading that differs from the ply's position only in
+# one of its pieces read as an empty square, away from the move's squares,
+# settles it too - something on screen covering that square (seen: 22.Qxc7
+# with c7 read empty for the 1.2 s before the narrator stepped back). Among
+# the plies the drop cut, that difference was right 232 : 46 wrong; a piece
+# read where the position has none was mostly wrong. SETTLE_COVERED_FRAMES
+# caps how many frames may show the difference (0 = any).
+SETTLE_COVERED = int(os.environ.get("RECON_SETTLE_COVERED", "0"))
+SETTLE_COVERED_FRAMES = int(os.environ.get("RECON_SETTLE_COVERED_FRAMES", "0"))
+
+
+def _covered(here: str, read: str, keep: set[int]) -> bool:
+    """`read` is `here` with one piece, on a square not in `keep`, read as empty."""
+    diff = [k for k in range(64) if here[k] != read[k]]
+    return len(diff) == 1 and diff[0] not in keep and read[diff[0]] == "." and here[diff[0]] != "."
 
 
 def _settled(game: "Game", readings: list[tuple[float, str | None]],
@@ -805,15 +820,24 @@ def _settled(game: "Game", readings: list[tuple[float, str | None]],
     board = chess.Board()
     out = []
     for i, san in enumerate(game.moves_san):
-        board.push_san(san)
+        mv = board.parse_san(san)
+        board.push(mv)
         here = _placement_of(board)
+        # placement index of a square: rank 8 first (see _placement_of)
+        keep = {(7 - chess.square_rank(q)) * 8 + chess.square_file(q) for q in (mv.from_square, mv.to_square)}
         if game.flipped:
             here = here[::-1]
+            keep = {63 - k for k in keep}
         t0 = game.move_seconds[i]
         t1 = game.move_seconds[i + 1] if i + 1 < len(game.move_seconds) else t0 + SETTLE_TAIL_S
         t1 = max(t1, t0 + SETTLE_AFTER_S)
         lo, hi = bisect.bisect_right(times, t0), bisect.bisect_right(times, t1)
-        out.append(any(readings[j][1] == here for j in range(lo, hi)))
+        ok = any(readings[j][1] == here for j in range(lo, hi))
+        if not ok and SETTLE_COVERED:
+            cov = [j for j in range(lo, hi) if readings[j][1] is not None and _covered(here, readings[j][1], keep)]
+            close = sum(readings[j][1] is not None and _hamming(readings[j][1], here) == 1 for j in range(lo, hi))
+            ok = bool(cov) and (not SETTLE_COVERED_FRAMES or close <= SETTLE_COVERED_FRAMES)
+        out.append(ok)
         if near is not None:
             seen = [readings[j][1] for j in range(lo, hi) if readings[j][1] is not None]
             best = min((_hamming(p, here) for p in seen), default=None)
