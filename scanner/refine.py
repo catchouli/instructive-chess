@@ -18,6 +18,7 @@ order differed - stays bunched, and trust.py keeps not trusting it.
 from __future__ import annotations
 
 import math
+import os
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,12 @@ STABLE_FRAMES = 2      # a dense placement must repeat this often to count
 WINDOW_PAD = 3.0       # seconds either side of a bunch to re-read: its 1 fps time comes
                        # from a +-2 frame vote, so the moves can sit a couple of seconds off
 GAP_FILL = 2.0         # decode across a gap this short between frames still to read, rather than seek twice
+# The dense frames are only used where they agree with the video's 1 fps
+# readings on at least DENSE_MIN_AGREE of the moments both cover (0 = always),
+# checked on AGREE_MIN+ moments (sampling up to AGREE_SAMPLE uncached ones).
+DENSE_MIN_AGREE = float(os.environ.get("REFINE_DENSE_MIN_AGREE", "0"))
+AGREE_MIN = 30
+AGREE_SAMPLE = 60
 
 
 class DenseFrames:
@@ -88,17 +95,25 @@ class DenseFrames:
         return all(k in self.frames for k in range(max(0, math.ceil(a * DENSE_FPS - 1e-6)),
                                                      math.floor(b * DENSE_FPS + 1e-6) + 1))
 
-    def adopt_stalls(self, stalls: dict) -> int:
-        """Take in the frames of an older <id>-stalls.json (read at STALL_FPS
-        from each stall's start, which falls on the grid wherever the stall's
-        last ply was confirmed on a whole second or a 6 fps frame)."""
-        n = 0
-        for ts, pl in stalls.get("frames", []):
-            k = round(ts * DENSE_FPS)
-            if abs(ts * DENSE_FPS - k) < 0.01 and k not in self.frames:
-                self.frames[k] = pl
-                n += 1
-        return n
+    def agreement(self, readings: list[tuple[float, str | None]], sample: int = AGREE_SAMPLE) -> float | None:
+        """Share of the moments where a 1 fps reading read a board that this
+        reads the same: the two should be the same frame read the same way.
+        A --from-readings rescan reads the dense frames with piece templates
+        it fitted again, and on some videos that fit is wrong (M_iIF9efRgQ:
+        rank 1 read empty all video long; 76 of 535 videos agreed on under
+        10% of frames), so a re-read there would put garbage in place of good
+        readings. Reads up to `sample` frames that aren't cached yet. None
+        when too few moments compare."""
+        read = [(t, p) for t, p in readings if p is not None and abs(t * DENSE_FPS - round(t * DENSE_FPS)) < 1e-6]
+        have = [(t, p) for t, p in read if round(t * DENSE_FPS) in self.frames]
+        if len(have) < AGREE_MIN:
+            step = max(1, len(read) // sample)
+            for t, _ in read[::step][:sample]:
+                self.read(t, t)
+            have = [(t, p) for t, p in read if round(t * DENSE_FPS) in self.frames]
+        if len(have) < AGREE_MIN:
+            return None
+        return sum(self.frames[round(t * DENSE_FPS)] == p for t, p in have) / len(have)
 
 
 def _bunches(move_seconds: list[float]) -> list[tuple[int, int]]:
