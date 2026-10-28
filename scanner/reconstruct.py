@@ -49,9 +49,11 @@ BROWSE_STEP_S = 3.0       # a ply this recent that moved the board toward the ea
 BROWSE_STEP_PLIES = 2     # ...up to this many (on 14 videos, 2 gave 8,438 right plies and 1 gave 8,402)
 BRIEF_UNDO_NEAR = 3       # ...but one ply shown briefly and taken back only within this many plies of an
                           # unexplainable reading a square off (0 = always): see EXPERIMENTS.md
-BRIEF_UNDO_RAW = int(os.environ.get("RECON_BRIEF_UNDO_RAW", "0"))
-                          # ...or when the ply after it comes from a raw frame (A-B switch, 0 = off; traced:
-                          # BdcY0WCN29Y 7.Qd2 read, taken back as brief, then "7.c3" from a raw frame trusted)
+BRIEF_UNDO_RAW = int(os.environ.get("RECON_BRIEF_UNDO_RAW", "1"))
+                          # ...or when the ply after it comes from a raw frame (0 = off; traced: BdcY0WCN29Y
+                          # 7.Qd2 read, taken back as brief, then "7.c3" from a raw frame trusted). Whole
+                          # library: it changes 2 games - that one (wrong trusted -> trust ends at ply 10)
+                          # and qv6_noaf7BA-8 (25 -> 20 trusted, all right)
 RAW_FALLBACK = 1.0  # a voted reading nothing explains is tried again as the raw frame (0 = off): see EXPERIMENTS.md
 RAW_DOUBTFUL = 3.0  # ...and its moves end trust: 1 = when the voted reading was a square off, 2 = always,
                     # 3 = when they and the next reading's make a big bunch, 0 = never
