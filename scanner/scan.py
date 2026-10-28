@@ -169,15 +169,17 @@ def save_model(video_id: str, readings_box, model: "recognize.BoardModel", read_
     os.replace(tmp, f)
 
 
-def fit_model_to_readings(path: Path, box, readings: list[tuple[float, str | None]], log=lambda msg: None):
+def fit_model_to_readings(path: Path, boxes, readings: list[tuple[float, str | None]], log=lambda msg: None):
     """Piece templates for reading this video's frames the way its saved
     readings were read: fitted (recognize.calibrate_from_start, which also
     tunes the box) on each of the first FIT_TRIES opening frames, and scored
     by how many of ~FIT_CHECK sampled frames they read the same as the saved
-    readings. Looks in the first FIT_WINDOW_S seconds, then the whole video.
+    readings. Looks in the first FIT_WINDOW_S seconds, then the whole video,
+    with each box of `boxes` in turn (the readings' box first: on three videos
+    only the box found again in the video showed an opening position).
     Returns (model, the box it reads with) or (None, None)."""
     saved = {round(t, 3): p for t, p in readings}
-    for a, b in ((0.0, FIT_WINDOW_S), (FIT_WINDOW_S, 0.0)):
+    for box, (a, b) in ((box, w) for box in boxes for w in ((0.0, FIT_WINDOW_S), (FIT_WINDOW_S, 0.0))):
         fits, check = [], []
         every = max(1, int((b or (readings[-1][0] if readings else 0) - a) / FIT_CHECK))
         for i, (ts, frame) in enumerate(iter_frames(path, 1.0, a, b)):
@@ -689,10 +691,10 @@ def main(argv: list[str]) -> int:
         print(f"[3/6] reusing the readings in {saved.name}")
         readings = [(ts, pl) for ts, pl in data["readings"]]
         recognize.TUNE_GRID = data.get("tune_grid", 0.0)    # fit the box as the scan that saved them did
-        box = board_detect.Box(*data["box"], score=1.0)
+        found, box = box, board_detect.Box(*data["box"], score=1.0)
         if model is None:
             # fit the piece templates again, as the readings were read (see MODEL_FIT), and keep them
-            model, read_box = fit_model_to_readings(src.path, box, readings, log=print)
+            model, read_box = fit_model_to_readings(src.path, [box, found], readings, log=print)
             if model is not None and not args.crop:
                 save_model(src.video_id, data["box"], model, read_box)
 
