@@ -49,6 +49,9 @@ BROWSE_STEP_S = 3.0       # a ply this recent that moved the board toward the ea
 BROWSE_STEP_PLIES = 2     # ...up to this many (on 14 videos, 2 gave 8,438 right plies and 1 gave 8,402)
 BRIEF_UNDO_NEAR = 3       # ...but one ply shown briefly and taken back only within this many plies of an
                           # unexplainable reading a square off (0 = always): see EXPERIMENTS.md
+BRIEF_UNDO_RAW = int(os.environ.get("RECON_BRIEF_UNDO_RAW", "0"))
+                          # ...or when the ply after it comes from a raw frame (A-B switch, 0 = off; traced:
+                          # BdcY0WCN29Y 7.Qd2 read, taken back as brief, then "7.c3" from a raw frame trusted)
 RAW_FALLBACK = 1.0  # a voted reading nothing explains is tried again as the raw frame (0 = off): see EXPERIMENTS.md
 RAW_DOUBTFUL = 3.0  # ...and its moves end trust: 1 = when the voted reading was a square off, 2 = always,
                     # 3 = when they and the next reading's make a big bunch, 0 = never
@@ -1005,10 +1008,11 @@ def reconstruct(readings: list[tuple[float, str | None]],
     after_retract = False          # an undo / browse back / detour since the last accepted ply
     after_unreach1 = False         # an unexplainable reading a square off since the last accepted ply
     unreach1_ply = None            # ...and the ply count at the last one (see BRIEF_UNDO_NEAR)
+    brief_undo = False             # a brief undo that didn't end trust since the last accepted ply
     last_retract = -1e9            # when the board last went back (undo, browsing, detour): see RECOVER
 
     def close(why: str = ""):
-        nonlocal current, board, history, browsing, skipped, undone_from, pending_fuzzy, pending_seen, after_retract, after_unreach1, unreach1_ply
+        nonlocal current, board, history, browsing, skipped, undone_from, pending_fuzzy, pending_seen, after_retract, after_unreach1, unreach1_ply, brief_undo
         if current:
             note(last_ts, f"close {why}: {current.ply} plies, {current.skipped} skipped")
         if current and current.ply >= 2:
@@ -1016,7 +1020,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
         current, board = None, None
         history, browsing, skipped, undone_from = [], False, [], None
         pending_fuzzy, pending_seen = [], 0.0
-        after_retract = after_unreach1 = False
+        after_retract = after_unreach1 = brief_undo = False
         unreach1_ply = None
 
     def retract_to(k: int) -> None:
@@ -1201,6 +1205,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
                 near = unreach1_ply is not None and current.ply - unreach1_ply <= BRIEF_UNDO_NEAR
                 retract_to(n - 1)
                 after_retract = after_retract or not BRIEF_UNDO_NEAR or near
+                brief_undo = not after_retract
                 last_retract = ts
                 misses = 0
                 continue
@@ -1487,7 +1492,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
             current.doubtful.extend(range(current.ply, current.ply + len(moves)))
         if after_unreach1:
             current.rough.append(current.ply)
-        if from_raw and (RAW_DOUBTFUL == 2 or (RAW_DOUBTFUL == 1 and raw_unreach1)):
+        if from_raw and (RAW_DOUBTFUL == 2 or (RAW_DOUBTFUL == 1 and raw_unreach1) or (BRIEF_UNDO_RAW and brief_undo)):
             current.doubtful.extend(range(current.ply, current.ply + len(moves)))
         if RAW_DOUBTFUL == 3 and raw_split is not None and not from_raw and ts - raw_split[2] <= RAW_SPLIT_S \
                 and raw_split[1] + len(moves) >= RAW_SPLIT_BUNCH and raw_split[0] + raw_split[1] == current.ply:
@@ -1499,7 +1504,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
         raw_split = (current.ply, len(moves), ts) if from_raw else None
         raw_pending = (current, range(current.ply, current.ply + len(moves)), board.copy(stack=False), moves) \
             if from_raw and RAW_CONFIRM else None
-        after_retract = after_unreach1 = False
+        after_retract = after_unreach1 = brief_undo = False
         if hidden_kings:
             # where a missing king really is is a guess: a move by its side
             # could be a king move or castling in disguise
