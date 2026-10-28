@@ -74,6 +74,14 @@ LOOKAHEAD_DEPTH = 4         # ...searched this deep at most
 LOOKAHEAD_MAX_VARIANTS = 4  # ...trying at most this many premove-stripped variants of it
 OPEN_DEPTH = 5         # a video that skips the opening frames: accept an early
 OPEN_HAMMING = 16     # position implied uniquely from the standard start
+REOPEN_OTHER_SIDE = int(os.environ.get("RECON_REOPEN_OTHER_SIDE", "0"))
+REOPEN_DEPTH = 10     # ...searched this deep: by the time the old game is that far off, the new one is
+                      # 7-8 plies in
+REOPEN_FAR = 16       # A-B switch (0 = off): while a game is open, a reading at least this many squares
+                      # from it that is such a position with the board the other way up is a new game
+                      # (traced: 8C69k-ce4-c, the waiting screen showed the start from Black's side, the
+                      # site turned the board for a game as White, and the open "game" read the new one
+                      # upside down until it closed, too far in to open mid-game)
 START_TOLERANCE = 1     # allowed mismatched squares when spotting a start position
                         # (every real first move changes >= 2 squares, so 1 is safe)
 START_OCC_TOLERANCE = 2  # ... when the piece silhouette is exactly the opening one
@@ -1078,6 +1086,25 @@ def reconstruct(readings: list[tuple[float, str | None]],
             last_ts = ts
             continue
 
+        if REOPEN_OTHER_SIDE and current is not None and board is not None:
+            current_flipped = current.flipped
+            tgt = placement if current.flipped else placement[::-1]   # the other way up
+            if _hamming(tgt, START) <= OPEN_HAMMING and \
+                    _hamming(_placement_of(board), placement[::-1] if current.flipped else placement) >= REOPEN_FAR \
+                    and (seq := _find_sequence(chess.Board(), tgt, REOPEN_DEPTH)[0]):
+                close("new game, the board turned")
+                current = Game(start_seconds=ts, flipped=not current_flipped)
+                board = chess.Board()
+                history = [_placement_of(board)]
+                for mv in seq:
+                    current.moves_san.append(board.san(mv))
+                    current.move_seconds.append(ts)
+                    board.push(mv)
+                    history.append(_placement_of(board))
+                misses = 0
+                last_ts = ts
+                note(ts, f"open mid-game ({'flipped' if current.flipped else 'normal'}) with {' '.join(current.moves_san)}")
+                continue
         if current is None or board is None:
             # the video may have skipped the first moves - open a game if this
             # reading is a unique short continuation of the standard start
