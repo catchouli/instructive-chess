@@ -74,14 +74,16 @@ LOOKAHEAD_DEPTH = 4         # ...searched this deep at most
 LOOKAHEAD_MAX_VARIANTS = 4  # ...trying at most this many premove-stripped variants of it
 OPEN_DEPTH = 5         # a video that skips the opening frames: accept an early
 OPEN_HAMMING = 16     # position implied uniquely from the standard start
-REOPEN_OTHER_SIDE = int(os.environ.get("RECON_REOPEN_OTHER_SIDE", "0"))
+REOPEN_OTHER_SIDE = int(os.environ.get("RECON_REOPEN_OTHER_SIDE", "1"))
 REOPEN_DEPTH = 10     # ...searched this deep: by the time the old game is that far off, the new one is
                       # 7-8 plies in
-REOPEN_FAR = 16       # A-B switch (0 = off): while a game is open, a reading at least this many squares
+REOPEN_FAR = 16       # (0 = off) While a game is open, a reading at least this many squares
                       # from it that is such a position with the board the other way up is a new game
                       # (traced: 8C69k-ce4-c, the waiting screen showed the start from Black's side, the
                       # site turned the board for a game as White, and the open "game" read the new one
-                      # upside down until it closed, too far in to open mid-game)
+                      # upside down until it closed, too far in to open mid-game). Whole library:
+                      # matched +5 (7 new, 2 lost), right plies +140, trusted +59, 0 wrong; 3 games end
+                      # 1-2 plies earlier, trust drops in 2
 START_TOLERANCE = 1     # allowed mismatched squares when spotting a start position
                         # (every real first move changes >= 2 squares, so 1 is safe)
 START_OCC_TOLERANCE = 2  # ... when the piece silhouette is exactly the opening one
