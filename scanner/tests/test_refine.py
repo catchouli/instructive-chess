@@ -1,3 +1,4 @@
+import math
 import sys
 from pathlib import Path
 
@@ -57,3 +58,29 @@ def test_a_run_never_matching_exactly_does_not_confirm():
     path = _path("Nf3", "Nc6")
     dense = [(10.0, _misread(path[0])), (10.2, _misread(path[0])), (11.0, path[1]), (11.2, path[1])]
     assert refine.split_bunch(path, dense, 12.0) is None
+
+
+class _Frames:
+    """A stand-in DenseFrames: every grid frame in [a, b] reads as `name`."""
+    def __init__(self, name):
+        self.name, self.added = name, 0
+
+    def read(self, a, b):
+        # the grid frames in [a, b], as DenseFrames.read picks them
+        return [(k / refine.DENSE_FPS, self.name) for k in range(math.ceil(a * refine.DENSE_FPS - 1e-6),
+                                                                 math.floor(b * refine.DENSE_FPS + 1e-6) + 1)]
+
+    def covers(self, a, b):
+        return True
+
+
+def test_segmented_frames_split_a_window_at_the_board_move():
+    fr = refine.SegmentedFrames([(0.0, _Frames("old box")), (10.0, _Frames("new box"))], readings=[])
+    got = fr.read(9.5, 10.5)
+    assert {p for t, p in got if t < 10} == {"old box"} and {p for t, p in got if t >= 10} == {"new box"}
+    assert [t for t, _ in got] == sorted(t for t, _ in got)
+
+
+def test_segmented_frames_without_templates_give_the_readings_back():
+    fr = refine.SegmentedFrames([(0.0, _Frames("old box")), (10.0, None)], readings=[(10.0, "a"), (11.0, None), (12.0, "b")])
+    assert fr.read(10.0, 11.5) == [(10.0, "a"), (11.0, None)]

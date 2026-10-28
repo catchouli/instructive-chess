@@ -133,16 +133,16 @@ def model_stamp(model: "recognize.BoardModel | None") -> str:
     return h.hexdigest()[:16]
 
 
-def _model_file(video_id: str) -> Path:
-    return download.CACHE / f"{video_id}-model.npz"
+def _model_file(video_id: str, suffix: str = "") -> Path:
+    return download.CACHE / f"{video_id}-model{suffix}.npz"
 
 
-def load_model(video_id: str, readings_box) -> "tuple[recognize.BoardModel, board_detect.Box] | tuple[None, None]":
+def load_model(video_id: str, readings_box, suffix: str = "") -> "tuple[recognize.BoardModel, board_detect.Box] | tuple[None, None]":
     """The piece templates a --from-readings run calibrated before for these
     readings, if the board and template code is unchanged: finding them means
     decoding the video up to its first opening position and locating the
     board again (most of a cached rescan's time)."""
-    f = _model_file(video_id)
+    f = _model_file(video_id, suffix)
     if not f.exists():
         return None, None
     with np.load(f, allow_pickle=False) as z:
@@ -155,7 +155,7 @@ def load_model(video_id: str, readings_box) -> "tuple[recognize.BoardModel, boar
         return model, board_detect.Box(*meta["read_box"], score=1.0)
 
 
-def save_model(video_id: str, readings_box, model: "recognize.BoardModel", read_box) -> None:
+def save_model(video_id: str, readings_box, model: "recognize.BoardModel", read_box, suffix: str = "") -> None:
     fields = {k: getattr(model, k) for k in ("piece_of", "flipped", "occ_thresh", "occ_diff", "match_thresh", "n_base")}
     fields = {k: (list(v) if k == "piece_of" else v.item() if hasattr(v, "item") else v) for k, v in fields.items()}
     arrays = {"temps": model.temps, "masks": model.masks}
@@ -163,13 +163,14 @@ def save_model(video_id: str, readings_box, model: "recognize.BoardModel", read_
         arrays["empty"] = model.empty
     meta = {"code": code_stamp(recognize, board_detect), "box": list(readings_box), "fit": MODEL_FIT,
             "read_box": [float(v) for v in read_box.as_tuple()], "fields": fields}
-    f = _model_file(video_id)
+    f = _model_file(video_id, suffix)
     tmp = f.with_name(f.stem + ".tmp.npz")
     np.savez(tmp, meta=json.dumps(meta), **arrays)
     os.replace(tmp, f)
 
 
-def fit_model_to_readings(path: Path, boxes, readings: list[tuple[float, str | None]], log=lambda msg: None):
+def fit_model_to_readings(path: Path, boxes, readings: list[tuple[float, str | None]], log=lambda msg: None,
+                          span: tuple[float, float] = (0.0, 0.0)):
     """Piece templates for reading this video's frames the way its saved
     readings were read: fitted (recognize.calibrate_from_start, which also
     tunes the box) on each of the first FIT_TRIES opening frames, and scored
@@ -177,11 +178,16 @@ def fit_model_to_readings(path: Path, boxes, readings: list[tuple[float, str | N
     readings. Looks in the first FIT_WINDOW_S seconds, then the whole video,
     with each box of `boxes` in turn (the readings' box first: on three videos
     only the box found again in the video showed an opening position).
+    `span` limits it to one stretch of the video (end 0 = the video's end).
     Returns (model, the box it reads with) or (None, None)."""
     saved = {round(t, 3): p for t, p in readings}
-    for box, (a, b) in ((box, w) for box in boxes for w in ((0.0, FIT_WINDOW_S), (FIT_WINDOW_S, 0.0))):
+    s0, s1 = span
+    windows = [(s0, s0 + FIT_WINDOW_S if not s1 else min(s1, s0 + FIT_WINDOW_S))]
+    if not s1 or s1 > s0 + FIT_WINDOW_S:
+        windows.append((s0 + FIT_WINDOW_S, s1))
+    for box, (a, b) in ((box, w) for box in boxes for w in windows):
         fits, check = [], []
-        every = max(1, int((b or (readings[-1][0] if readings else 0) - a) / FIT_CHECK))
+        every = max(1, int(((b or (readings[-1][0] if readings else a)) - a) / FIT_CHECK))
         for i, (ts, frame) in enumerate(iter_frames(path, 1.0, a, b)):
             if saved.get(round(ts, 3)) and i % every == 0:
                 check.append((ts, frame))
@@ -201,6 +207,15 @@ def fit_model_to_readings(path: Path, boxes, readings: list[tuple[float, str | N
             f"{len(check)} sampled frames as saved; other fits {sorted(x for x, _ in scored)[:-1]})")
         return model, tuned
     return None, None
+
+
+def _by_part(parts: list[dict], games: list) -> list[tuple[dict, list]]:
+    """Each stretch of the video (see tests/relocate.py) with the games that start in it."""
+    out = []
+    for i, p in enumerate(parts):
+        t1 = parts[i + 1]["t0"] if i + 1 < len(parts) else math.inf
+        out.append((p, [g for g in games if p["t0"] <= g.start_seconds < t1]))
+    return [(p, gs) for p, gs in out if gs]
 
 
 def write_json(path: Path, data) -> None:
@@ -253,15 +268,15 @@ def sample_frames(path: Path, start: float, end: float, n: int):
     return out
 
 
-def read_frames(frames, box, log=lambda msg: None):
+def read_frames(frames, box, log=lambda msg: None, model: "recognize.BoardModel | None" = None):
     """Read every (timestamp, frame) into a (timestamp, placement-or-None)
     stream: self-calibrate piece templates at the first opening position
     (see recognize.calibrate_from_start), re-fit the board box at every
     later one (recognize.retune_at_start - streams shift the board between
     games), then match each frame. Returns (model, box, readings); model is
     None if no opening position was ever seen. Shared by scan.py and
-    tests/dump_readings.py so they can't drift apart."""
-    model: recognize.BoardModel | None = None
+    tests/dump_readings.py so they can't drift apart. Given a `model` (and
+    the box it was cut at), reads with it from the first frame."""
     readings: list[tuple[float, str | None]] = []
     retune_failed_at = -1e9   # a re-fit that found nothing isn't retried for a while
     for ts, frame in frames:
@@ -692,11 +707,28 @@ def main(argv: list[str]) -> int:
         readings = [(ts, pl) for ts, pl in data["readings"]]
         recognize.TUNE_GRID = data.get("tune_grid", 0.0)    # fit the box as the scan that saved them did
         found, box = box, board_detect.Box(*data["box"], score=1.0)
+        # a later entry at the same time replaces an earlier one (no empty stretches)
+        segs = [g for i, g in enumerate(data.get("segments", []))
+                if not any(h["t"] == g["t"] for h in data["segments"][i + 1:])]
         if model is None:
             # fit the piece templates again, as the readings were read (see MODEL_FIT), and keep them
-            model, read_box = fit_model_to_readings(src.path, [box, found], readings, log=print)
+            model, read_box = fit_model_to_readings(src.path, [box, found], readings, log=print,
+                                                    span=(0.0, segs[0]["t"] if segs else 0.0))
             if model is not None and not args.crop:
                 save_model(src.video_id, data["box"], model, read_box)
+        # where the board moved mid-stream (tests/relocate.py), each stretch has its own box and templates
+        parts = [{"t0": 0.0, "box": box, "model": model, "read_box": read_box, "suffix": ""}]
+        for i, seg in enumerate(segs, 1):
+            sbox = board_detect.Box(*seg["box"], score=1.0)
+            t1 = segs[i]["t"] if i < len(segs) else 0.0
+            m, rb = load_model(src.video_id, seg["box"], suffix=f"-{i}")
+            if m is None:
+                print(f"      from t={int(seg['t'])}s the board is at {sbox.x},{sbox.y} {sbox.w}x{sbox.h}")
+                m, rb = fit_model_to_readings(src.path, [sbox], [r for r in readings if r[0] >= seg["t"]],
+                                              log=print, span=(seg["t"], t1))
+                if m is not None:
+                    save_model(src.video_id, seg["box"], m, rb, suffix=f"-{i}")
+            parts.append({"t0": seg["t"], "box": sbox, "model": m, "read_box": rb, "suffix": f"-{i}"})
 
     else:
         print(f"[3/6] scanning frames @ {args.fps} fps")
@@ -722,6 +754,7 @@ def main(argv: list[str]) -> int:
             else:
                 recognize.TUNE_GRID = 0.0
         box = box_read
+        parts = [{"t0": 0.0, "box": box, "model": model, "read_box": None, "suffix": ""}]
     if model is None:
         print("      never saw an opening position - no games recorded", file=sys.stderr)
         return 3
@@ -739,11 +772,16 @@ def main(argv: list[str]) -> int:
     # 6 fps frames, shared by the stall and fast-move re-reads and kept (for
     # a whole video), so a --from-readings run decodes only frames it hasn't read
     whole = not args.start and not args.end
-    dense_file = download.CACHE / f"{src.video_id}-dense.json"
-    # the 6 fps frames are read with the box the model was cut at (see MODEL_FIT)
-    dense = refine.DenseFrames(src.path, read_box or box, model, iter_frames,
-                               stamp=f"{code_stamp(recognize)}-{model_stamp(model)}",
-                               cache=json.loads(dense_file.read_text()) if whole and dense_file.exists() else None)
+    # the 6 fps frames are read with the box the model was cut at (see MODEL_FIT), per stretch
+    dense_files = []
+    for p in parts:
+        f = download.CACHE / f"{src.video_id}-dense{p['suffix']}.json"
+        frames = None if p["model"] is None else refine.DenseFrames(
+            src.path, p["read_box"] or p["box"], p["model"], iter_frames,
+            stamp=f"{code_stamp(recognize)}-{model_stamp(p['model'])}",
+            cache=json.loads(f.read_text()) if whole and f.exists() else None)
+        dense_files.append((f, frames))
+    dense = refine.SegmentedFrames([(p["t0"], frames) for p, (_, frames) in zip(parts, dense_files)], readings)
     dense_ok = True
     if refine.DENSE_MIN_AGREE and whole:
         agree = dense.agreement(readings)
@@ -763,23 +801,25 @@ def main(argv: list[str]) -> int:
         print(f"      re-read fast-move moments at {refine.DENSE_FPS} fps: {split} plies seen on their own")
     print(f"      {len(games)} games found, {len(kept)} kept "
           f"(confidence >= {args.min_confidence}, >= {args.min_ply} plies)")
-    if whole and dense.added:
-        write_json(dense_file, dense.to_json())
+    for f, frames in dense_files:
+        if whole and frames is not None and frames.added:
+            write_json(f, frames.to_json())
 
     if args.no_clocks:
         print("[5/6] reading clocks - skipped (--no-clocks)")
     else:
         print("[5/6] reading clocks")
         # what each window read is kept, keyed by the board box and the clock code
-        clocks_file = download.CACHE / f"{src.video_id}-clocks.json"
-        key = {"box": [int(v) for v in box.as_tuple()], "code": code_stamp(clock_read)}
-        clocks = json.loads(clocks_file.read_text()) if whole and clocks_file.exists() else {}
-        if any(clocks.get(k) != v for k, v in key.items()):
-            clocks = dict(key)
-        before = json.dumps(clocks, sort_keys=True)
-        annotate_clocks(src.path, box, kept, cache=clocks)
-        if whole and json.dumps(clocks, sort_keys=True) != before:
-            write_json(clocks_file, clocks)
+        for p, part_games in _by_part(parts, kept):
+            clocks_file = download.CACHE / f"{src.video_id}-clocks{p['suffix']}.json"
+            key = {"box": [int(v) for v in p["box"].as_tuple()], "code": code_stamp(clock_read)}
+            clocks = json.loads(clocks_file.read_text()) if whole and clocks_file.exists() else {}
+            if any(clocks.get(k) != v for k, v in key.items()):
+                clocks = dict(key)
+            before = json.dumps(clocks, sort_keys=True)
+            annotate_clocks(src.path, p["box"], part_games, cache=clocks)
+            if whole and json.dumps(clocks, sort_keys=True) != before:
+                write_json(clocks_file, clocks)
         frozen = [g for i, g in enumerate(kept) if reconstruct.is_frozen_replay(g, kept[:i])]
         for g in frozen:
             print(f"      t={int(g.start_seconds)}s: clocks never ran in a replay of an earlier game - dropped")
@@ -791,15 +831,16 @@ def main(argv: list[str]) -> int:
         print("[6/6] reading player ratings - skipped (--no-ratings)")
     else:
         print("[6/6] reading player ratings")
-        ratings_file = download.CACHE / f"{src.video_id}-ratings.json"
-        key = {"box": [int(v) for v in box.as_tuple()], "code": code_stamp(rating_read, download)}
-        ratings = json.loads(ratings_file.read_text()) if whole and ratings_file.exists() else {}
-        if any(ratings.get(k) != v for k, v in key.items()):
-            ratings = dict(key)
-        before = json.dumps(ratings, sort_keys=True)
-        annotate_ratings(src, box, kept, cache=ratings)
-        if whole and json.dumps(ratings, sort_keys=True) != before:
-            write_json(ratings_file, ratings)
+        for p, part_games in _by_part(parts, kept):
+            ratings_file = download.CACHE / f"{src.video_id}-ratings{p['suffix']}.json"
+            key = {"box": [int(v) for v in p["box"].as_tuple()], "code": code_stamp(rating_read, download)}
+            ratings = json.loads(ratings_file.read_text()) if whole and ratings_file.exists() else {}
+            if any(ratings.get(k) != v for k, v in key.items()):
+                ratings = dict(key)
+            before = json.dumps(ratings, sort_keys=True)
+            annotate_ratings(src, p["box"], part_games, cache=ratings)
+            if whole and json.dumps(ratings, sort_keys=True) != before:
+                write_json(ratings_file, ratings)
         n_rated = sum(1 for g in kept if g.rating_white is not None or g.rating_black is not None)
         print(f"      rating data for {n_rated}/{len(kept)} games")
 

@@ -116,6 +116,44 @@ class DenseFrames:
         return sum(self.frames[round(t * DENSE_FPS)] == p for t, p in have) / len(have)
 
 
+class SegmentedFrames:
+    """The 6 fps frames of a video whose board moved mid-stream (see
+    tests/relocate.py): one DenseFrames per stretch with its own box and
+    templates, each request split at the stretch boundaries. A stretch without
+    templates (none could be fitted) gives back its 1 fps readings instead."""
+
+    def __init__(self, parts: list[tuple[float, "DenseFrames | None"]], readings: list[tuple[float, str | None]]):
+        self.parts = sorted(parts, key=lambda p: p[0])
+        self.fallback = readings
+
+    def _spans(self, a: float, b: float):
+        for i, (t0, frames) in enumerate(self.parts):
+            t1 = self.parts[i + 1][0] if i + 1 < len(self.parts) else math.inf
+            lo, hi = max(a, t0), min(b, t1 - 1e-6)
+            if lo <= hi:
+                yield lo, hi, frames
+
+    def read(self, a: float, b: float) -> list[tuple[float, str | None]]:
+        out: list[tuple[float, str | None]] = []
+        for lo, hi, frames in self._spans(a, b):
+            out += frames.read(lo, hi) if frames is not None else [r for r in self.fallback if lo <= r[0] <= hi]
+        return out
+
+    def covers(self, a: float, b: float) -> bool:
+        return all(frames is None or frames.covers(lo, hi) for lo, hi, frames in self._spans(a, b))
+
+    def agreement(self, readings: list[tuple[float, str | None]]) -> float | None:
+        """The lowest of the stretches' agreements (see DenseFrames.agreement)."""
+        found = [frames.agreement([r for r in readings if lo <= r[0] <= hi])
+                 for lo, hi, frames in self._spans(0.0, math.inf) if frames is not None]
+        found = [x for x in found if x is not None]
+        return min(found) if found else None
+
+    @property
+    def added(self) -> int:
+        return sum(frames.added for _, frames in self.parts if frames is not None)
+
+
 def _bunches(move_seconds: list[float]) -> list[tuple[int, int]]:
     """(first ply index, ply count) of each run of equal confirmation times."""
     out, i = [], 0
