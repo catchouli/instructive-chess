@@ -182,6 +182,9 @@ def fit_model_to_readings(path: Path, boxes, readings: list[tuple[float, str | N
     Returns (model, the box it reads with) or (None, None)."""
     saved = {round(t, 3): p for t, p in readings}
     s0, s1 = span
+    # the video's end, so no window starts past it (ffmpeg fails on one: a stretch starting
+    # under FIT_WINDOW_S before the end failed 23 videos)
+    s1 = s1 or (readings[-1][0] + 1.0 if readings else 0.0)
     windows = [(s0, s0 + FIT_WINDOW_S if not s1 else min(s1, s0 + FIT_WINDOW_S))]
     if not s1 or s1 > s0 + FIT_WINDOW_S:
         windows.append((s0 + FIT_WINDOW_S, s1))
