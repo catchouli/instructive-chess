@@ -13,7 +13,9 @@ boards than before. The readings file gets a "segments" list - from which
 time on which box applies, each stretch with its own templates - that scan.py
 follows for the 6 fps frames, clocks and ratings. The old file is kept as
 <id>-readings.pre-relocate.json; a video done by this pass (marked in
-<id>-relocate.json) is left alone.
+<id>-relocate.json) is left alone. Pass 3 (extend) moves the boundaries between stretches,
+with the templates a rescan cached for each (so it runs after one); the readings pass 2 left
+are kept as <id>-readings.pre-extend.json.
 
     relocate.py [--jobs N] [--dry-run] VIDEO_ID [...]     (default: every video in the catalog)
 """
@@ -37,7 +39,7 @@ import scan          # noqa: E402
 POOR_FRAMES = 60      # readings in a row...
 POOR_SHARE = 0.5      # ...with under this share readable: a stretch to read again
 SAME_PX = 8           # a box found again within this many pixels (and 2% size) is the same box
-PASS = 2              # 1: moved boards only (LOST 120 readings under 10%); 2: this
+PASS = 3              # 1: moved boards only (LOST 120 readings under 10%); 2: poor stretches; 3: + extend()
 
 
 def poor_stretches(readings: list[tuple[float, str | None]]) -> list[tuple[float, float]]:
@@ -106,6 +108,63 @@ def box_at(data: dict, segments: list[dict], t: float) -> list:
     return next((g["box"] for g in reversed(segments) if g["t"] <= t), data["box"])
 
 
+STEP = 30         # extend() moves a boundary this many seconds at a time...
+STEP_SAMPLES = 5  # ...where the other templates read better on most of this many frames in the step
+MORE_PIECES = 4   # better: a confident read where the other isn't, or this many more pieces
+
+
+def _confident(rd) -> bool:
+    return rd.confidence >= 0.72 and 4 <= rd.n_pieces <= 34
+
+
+def reads_better(new, old) -> bool:
+    """One frame read with two sets of templates: does `new` read it clearly better?"""
+    return _confident(new) and (not _confident(old) or new.n_pieces >= old.n_pieces + MORE_PIECES)
+
+
+def extend(vid: str, media: Path, data: dict, readings: list, segments: list[dict]) -> tuple[list, list[dict], list[str]]:
+    """Move each boundary between two stretches (scan.py's parts, with the templates the rescan
+    cached for them) back or forward, a STEP at a time, while the templates on the far side read
+    the frames clearly better than the ones in use. A stretch is cut where under half its frames
+    read a board, but a board theme changed earlier still reads, with pieces missing
+    (fRhVZueNenU: from 590 s the video's templates read 3-8 pieces, those fitted from 873 s 20-29,
+    the game that started there was never formed). A boundary never reaches the next one, so
+    each part keeps its index and its cached templates. Returns (readings, segments, notes)."""
+    parts = [(0.0, data["box"], "")] + [(g["t"], g["box"], f"-{i}") for i, g in enumerate(segments, 1)]
+    models = [scan.load_model(vid, box, suffix=suf) for _, box, suf in parts]
+    if any(m is None for m, _ in models):
+        return readings, segments, ["extend: templates not cached (rescan first)"]
+    end = readings[-1][0] + 1.0
+    notes = []
+    for j in range(len(parts) - 1):
+        b = segments[j]["t"]
+        lo = (segments[j - 1]["t"] if j else 0.0) + STEP
+        hi = (segments[j + 1]["t"] if j + 1 < len(segments) else end) - STEP
+        for side, (win, lose) in (("back", (j + 1, j)), ("forward", (j, j + 1))):
+            edge = b
+            while (edge - STEP >= lo) if side == "back" else (edge + STEP <= hi):
+                a0 = edge - STEP if side == "back" else edge
+                frames = list(scan.iter_frames(media, STEP_SAMPLES / STEP, a0, a0 + STEP))[:STEP_SAMPLES]
+                wins = sum(reads_better(recognize.read_board(f, models[win][1], models[win][0]),
+                                        recognize.read_board(f, models[lose][1], models[lose][0])) for _, f in frames)
+                if not frames or wins * 2 <= len(frames):
+                    break
+                edge = a0 if side == "back" else a0 + STEP
+            if edge == b:
+                continue
+            a, z = sorted((edge, b))
+            _, _, more = scan.read_frames(scan.iter_frames(media, 1.0, a, z), models[win][1], model=models[win][0])
+            more = [(round(ts, 3), p) for ts, p in more if a <= ts < z]
+            gained = sum(p is not None for _, p in more) - sum(p is not None for ts, p in readings if a <= ts < z)
+            readings = sorted([r for r in readings if not a <= r[0] < z] + more, key=lambda r: r[0])
+            segments[j] = {**segments[j], "t": edge}
+            notes.append(f"extend {b:.0f}s {side} to {edge:.0f}s ({gained:+d} boards read)")
+            b = edge
+            if side == "back":
+                break   # the boundary moved back: the old one is inside the stretch now
+    return readings, segments, notes
+
+
 def relocate(vid: str, dry_run: bool = False) -> str:
     cache = download.CACHE
     path = cache / f"{vid}-readings.json"
@@ -115,14 +174,15 @@ def relocate(vid: str, dry_run: bool = False) -> str:
         media = next(m for m in cache.glob(f"{vid}.*") if m.suffix in (".mkv", ".webm", ".mp4"))
     except (FileNotFoundError, StopIteration):
         return f"{vid}: no readings or video"
-    if mark.exists() and json.loads(mark.read_text()).get("pass", 0) >= PASS:
+    done = json.loads(mark.read_text()).get("pass", 0) if mark.exists() else 0
+    if done >= PASS:
         return f"{vid}: done"
     recognize.TUNE_GRID = data.get("tune_grid", 0.0)
     readings = [(t, p) for t, p in data["readings"]]
     segments: list[dict] = [g for i, g in enumerate(data.get("segments", []))
                             if not any(h["t"] == g["t"] for h in data["segments"][i + 1:])]
     notes, changed = [], False
-    for a, stop in poor_stretches(readings):
+    for a, stop in (poor_stretches(readings) if done < 2 else []):
         cur = box_at(data, segments, a)
         found = board_detect.detect(scan.sample_frames(media, a + min(60.0, (stop - a) / 4), min(stop, a + 1260), 15))
         box = found if found is not None and not same_box(found.as_tuple(), cur) else board_detect.Box(*cur, score=1.0)
@@ -146,11 +206,17 @@ def relocate(vid: str, dry_run: bool = False) -> str:
         segments.sort(key=lambda g: g["t"])
         notes.append(f"{a:.0f}-{stop:.0f}s {how}: {gained} more boards read")
         changed = True
+    if done == 2 and segments:
+        readings, segments, more_notes = extend(vid, media, data, readings, segments)
+        notes += more_notes
+        changed |= any(n.startswith("extend ") for n in more_notes)
     if not dry_run:
         if changed:
             backup = cache / f"{vid}-readings.pre-relocate.json"
             if not backup.exists():
                 shutil.copy2(path, backup)
+            if done == 2 and not (cache / f"{vid}-readings.pre-extend.json").exists():
+                shutil.copy2(path, cache / f"{vid}-readings.pre-extend.json")   # as pass 2 left it
             scan.write_json(path, {**data, "readings": readings, "segments": segments})
         scan.write_json(mark, {"pass": PASS, "notes": notes})
     return f"{vid}: " + ("; ".join(notes) if notes else "nothing poor")

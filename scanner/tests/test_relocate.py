@@ -25,3 +25,15 @@ def test_a_short_gap_or_half_read_stretch_is_not():
 
 def test_nothing_before_the_first_readable_minute():
     assert relocate.poor_stretches(_readings("." * 100 + "#" * 30 + "#" * 120)) == []
+
+
+class _Read:
+    def __init__(self, n_pieces, confidence):
+        self.n_pieces, self.confidence = n_pieces, confidence
+
+
+def test_reads_better_needs_a_confident_read_with_clearly_more_pieces():
+    assert relocate.reads_better(_Read(24, 0.84), _Read(6, 0.84))       # a theme the old templates miss
+    assert relocate.reads_better(_Read(24, 0.84), _Read(24, 0.60))      # the old read isn't confident
+    assert not relocate.reads_better(_Read(24, 0.84), _Read(22, 0.84))  # about the same
+    assert not relocate.reads_better(_Read(24, 0.60), _Read(6, 0.84))   # the new read isn't confident
