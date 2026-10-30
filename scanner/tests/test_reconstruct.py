@@ -134,6 +134,18 @@ def test_long_gap_ends_game():
     assert [g.moves_san for g in games] == [ITALIAN[:6], SICILIAN]
 
 
+def test_long_gap_mid_game_keeps_game_open():
+    # the narrator cuts away and back to the same game: it goes on, what follows the gap doubtful
+    whole = stream_for(ITALIAN)
+    cut = len(stream_for(ITALIAN[:6]))
+    pause = reconstruct.GAP_FRAMES + 2
+    readings = whole[:cut] + [(whole[cut - 1][0] + i, None) for i in range(1, pause)]
+    readings += [(ts + pause, p) for ts, p in whole[cut:]]
+    games = run(readings)
+    assert [g.moves_san for g in games] == [ITALIAN]
+    assert games[0].doubtful and min(games[0].doubtful) >= 6
+
+
 def test_short_fragment_is_dropped():
     games = run(stream_for(["e4"]))
     assert games == []

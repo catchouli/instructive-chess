@@ -23,7 +23,10 @@ START_FLIPPED = START[::-1]
 
 MAX_DEPTH = 6          # half-moves a single transition may bridge in one hop
 MAX_MISSES = 10        # consecutive unexplainable readings before a game is closed
-GAP_FRAMES = 10         # this many consecutive board-less frames ends a game
+GAP_FRAMES = 10         # this many consecutive board-less frames ends a game...
+GAP_RESUME = int(os.environ.get("RECON_GAP_RESUME", "1"))   # ...unless 1: kept open, the plies taken
+                        # after it doubtful (the narrator cut away and back; a new start or MAX_MISSES
+                        # unexplained readings still close it)
 DETOUR_MAX_PLIES = 8   # longest shown-then-undone line retracted (see the detour check)
 MAX_PLIES = 400
 LOOKAHEAD_S = 12.0     # a multi-ply bridge is checked against the next reading
@@ -1091,6 +1094,10 @@ def reconstruct(readings: list[tuple[float, str | None]],
             ei += 1
         kind, ts, placement = events[ei]
         if kind == "gap":
+            if GAP_RESUME and current is not None and board is not None:
+                note(ts, "gap: game kept open")
+                after_retract = True     # what follows is a guess across the gap: it ends trust (doubtful)
+                continue
             close("gap")
             continue
 
