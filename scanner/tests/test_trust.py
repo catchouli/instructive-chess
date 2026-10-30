@@ -48,3 +48,15 @@ def test_trust_ending_just_after_a_rough_ply_ends_at_it():
     assert trust.assess(MOVES, times, rough=[7])[1] == 7
     assert trust.assess(MOVES, times, rough=[3])[1] == 10     # too far back to matter
     assert trust.assess(MOVES, times, rough=[10])[1] == 10    # past where trust ends anyway
+
+
+def test_a_doubtful_ply_followed_by_clean_ones_does_not_end_trust():
+    moves = ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7", "Re1", "b5", "Bb3", "d6",
+             "c3", "O-O", "h3", "Nb8", "d4", "Nbd7", "c4", "c6"]
+    times = list(range(len(moves)))
+    # doubtful at ply 5 with eight clean plies after it: trust runs on to the usual holdback
+    _, trusted = trust.assess(moves, times, doubtful=[5])
+    assert trusted == len(moves) - trust.TAIL_PLIES
+    # ...but not when one of those plies is marked too
+    _, trusted = trust.assess(moves, times, doubtful=[5], rough=[9])
+    assert trusted == 5 - trust.TRIGGER_MARGIN

@@ -43,6 +43,12 @@ TRIGGER_MARGIN = 2     # trust ends this many plies before such a bunch
 TAIL_PLIES = 2         # always hold back this many final plies (unless mate)
 LATE_TAIL_PLIES = 4    # ...and this many, past LATE_PLY
 ROUGH_BACKOFF = 5      # trust ending this soon after a rough ply ends at it instead
+# A late pair, a guessed route or a doubtful ply doesn't end trust when this many plies right after
+# it were each confirmed on their own and unmarked: a wrong move there would have left the next
+# readings unexplained. Measured on the 2,483 matched games of 2026-10-30: +1,535 right plies shown in
+# 64 games, 0 wrong (shorter waits: late pair 4, doubtful 4-6 let wrong moves through; a big bunch
+# lets one through even after 12)
+CLEAN_AFTER = {"late bunch": 8, "ambiguous": 6, "doubtful": 8}
 
 # Chance a move is right, by how it was confirmed (the calibration above).
 CONF_SINGLE = 0.996
@@ -102,7 +108,7 @@ def assess(moves_san: list[str], move_seconds: list[float],
     n = len(moves_san)
     bunches = _bunches(move_seconds)
     conf = []
-    trusted = n
+    triggers = []          # (ply trust would end before, kind, last ply of the trigger)
     for i, (start, size) in enumerate(bunches):
         if size >= BIG_BUNCH:
             conf.append(CONF_BUNCH_BIG)
@@ -110,8 +116,10 @@ def assess(moves_san: list[str], move_seconds: list[float],
             conf.append(CONF_BUNCH_2_EARLY if start < LATE_PLY else CONF_BUNCH_2_LATE)
         else:
             conf.append(CONF_SINGLE)
-        if trusted == n and i == start and (size >= BIG_BUNCH or (size >= 2 and start >= LATE_PLY)):
-            trusted = max(0, start - TRIGGER_MARGIN)
+        if i == start and size >= BIG_BUNCH:
+            triggers.append((start, "big bunch", start + size - 1))
+        elif i == start and size >= 2 and start >= LATE_PLY:
+            triggers.append((start, "late bunch", start + size - 1))
     for i in ambiguous:
         if i < n:
             conf[i] = min(conf[i], CONF_GUESSED)
@@ -121,9 +129,20 @@ def assess(moves_san: list[str], move_seconds: list[float],
     for i in doubtful:
         if i < n:
             conf[i] = min(conf[i], CONF_FUZZY)
-    for marks in (ambiguous, fuzzy, doubtful):
-        if marks:
-            trusted = min(trusted, max(0, min(marks) - TRIGGER_MARGIN))
+    for kind, marks in (("ambiguous", ambiguous), ("fuzzy", fuzzy), ("doubtful", doubtful)):
+        triggers += [(i, kind, i) for i in marks]
+    marked = set(ambiguous) | set(fuzzy) | set(doubtful) | set(rough)
+
+    def clean(a: int, b: int) -> bool:
+        return b < n and all(bunches[i][1] == 1 and i not in marked for i in range(a, b + 1))
+
+    trusted = n
+    for at, kind, last in sorted(triggers):
+        wait = CLEAN_AFTER.get(kind, 0)
+        if wait and clean(last + 1, last + wait):
+            continue
+        trusted = max(0, at - TRIGGER_MARGIN)
+        break
     if not (clocks_checked_end and _ends_the_game(moves_san)):
         tail_start = min(n - TAIL_PLIES, max(min(LATE_PLY, n - TAIL_PLIES), n - LATE_TAIL_PLIES))
         for i in range(max(0, tail_start), n):
