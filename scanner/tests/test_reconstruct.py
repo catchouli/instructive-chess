@@ -520,3 +520,13 @@ def test_covered_square_is_one_of_our_pieces_read_empty_away_from_the_move():
     assert not reconstruct._covered(here, pawn_gone, move_squares)       # the move's own square
     extra = here[:chess.E5 ^ 56] + "p" + here[(chess.E5 ^ 56) + 1:]
     assert not reconstruct._covered(here, extra, move_squares)           # a piece where we have none
+
+
+def test_two_pieces_read_with_their_colours_swapped_are_found():
+    from reconstruct import _colour_swap
+    cur = "Q" + "." * 62 + "q"
+    assert _colour_swap(cur, "q" + "." * 62 + "Q") == {0, 63}
+    # one flip alone is a capture's footprint, not a misread
+    assert _colour_swap(cur, "q" + "." * 63) == set()
+    # two pieces of different kinds aren't swapped
+    assert _colour_swap("Q" + "." * 62 + "r", "q" + "." * 62 + "R") == set()

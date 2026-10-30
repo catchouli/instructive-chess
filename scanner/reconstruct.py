@@ -75,6 +75,7 @@ LOOKAHEAD_MAX_VARIANTS = 4  # ...trying at most this many premove-stripped varia
 OPEN_DEPTH = 5         # a video that skips the opening frames: accept an early
 OPEN_HAMMING = 16     # position implied uniquely from the standard start
 REOPEN_OTHER_SIDE = int(os.environ.get("RECON_REOPEN_OTHER_SIDE", "1"))
+UNSWAP_COLOURS = int(os.environ.get("RECON_UNSWAP_COLOURS", "1"))   # see _unswap_colours
 REOPEN_DEPTH = 10     # ...searched this deep: by the time the old game is that far off, the new one is
                       # 7-8 plies in
 REOPEN_FAR = 16       # (0 = off) While a game is open, a reading at least this many squares
@@ -203,6 +204,21 @@ def _changed_squares(board: chess.Board, mv: chess.Move) -> tuple:
     if board.is_en_passant(mv):
         return mv.from_square, mv.to_square, mv.to_square + (-8 if board.turn == chess.WHITE else 8)
     return mv.from_square, mv.to_square
+
+
+def _colour_swap(cur: str, target: str) -> frozenset[int]:
+    """The two squares where a reading has two pieces of one kind with their colours
+    swapped from the board's (empty if there aren't exactly two). No legal sequence of
+    moves swaps two pieces' colours in place, so where those are a reading's only
+    difference from the board it's a misread - and it can last (traced: KfuyDm5uksI,
+    from 13...Be6 every reading showed the white queen on e4 as black and the black
+    one on c5 as white; 14.e3 was never explained and the game was lost after 26 of
+    204 plies). Not on its own, though: with other squares changed too, real play
+    makes the same pattern (a pawn trade in the opening, z5HCkRMmQQE)."""
+    flips = [i for i in range(64) if cur[i] != "." and target[i] != cur[i] and target[i].lower() == cur[i].lower()]
+    if len(flips) != 2 or cur[flips[0]] == cur[flips[1]] or cur[flips[0]].lower() != cur[flips[1]].lower():
+        return frozenset()
+    return frozenset(flips)
 
 
 def _hamming(a: str, b: str) -> int:
@@ -1013,6 +1029,7 @@ def reconstruct(readings: list[tuple[float, str | None]],
     # mid-game - see the browsing check in the loop below.
     history: list[str] = []
     browsing = False
+    swap_seen = None               # (game, squares) two pieces were read with their colours swapped, see _colour_swap
     skipped: list[str] = []        # readings stepped over since the last accepted one (see _pick_path)
     pending_fuzzy: list[int] = []  # plies of the last bunch accepted a square off, awaiting an exact sighting
     pending_seen = 0.0             # ...seconds its resulting position has been read exactly since
@@ -1144,6 +1161,14 @@ def reconstruct(readings: list[tuple[float, str | None]],
             else:
                 note(ts, "king lifted: assumed still on its square")
                 target = repaired
+        if UNSWAP_COLOURS:
+            # taken as on the board where the swap is all that differs, and from then on while the
+            # same two squares show it (the board's pieces are still there); see _colour_swap
+            flips = _colour_swap(cur_placement, target)
+            if flips and (_hamming(cur_placement, target) == 2 or (swap_seen and swap_seen == (current, flips))):
+                note(ts, "two pieces read with their colours swapped: taken as on the board")
+                target = "".join(cur_placement[i] if i in flips else ch for i, ch in enumerate(target))
+                swap_seen = (current, flips)
         if target == cur_placement:
             misses = 0
             browsing = False
