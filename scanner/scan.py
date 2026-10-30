@@ -729,6 +729,12 @@ def main(argv: list[str]) -> int:
                 print(f"      from t={int(seg['t'])}s the board is at {sbox.x},{sbox.y} {sbox.w}x{sbox.h}")
                 m, rb = fit_model_to_readings(src.path, [sbox], [r for r in readings if r[0] >= seg["t"]],
                                               log=print, span=(seg["t"], t1))
+                if m is None:
+                    # most such stretches go back to a board read before (relocate.py marks where the
+                    # video's own box is in use again after a stretch): its templates read them (198
+                    # of 1,034 stretches, 17 h of video, had none - no 6 fps frames, clocks or ratings)
+                    m, rb = next(((p["model"], p["read_box"]) for p in reversed(parts)
+                                  if p["model"] is not None and list(p["box"].as_tuple()) == list(seg["box"])), (None, None))
                 if m is not None:
                     save_model(src.video_id, seg["box"], m, rb, suffix=f"-{i}")
             parts.append({"t0": seg["t"], "box": sbox, "model": m, "read_box": rb, "suffix": f"-{i}"})
